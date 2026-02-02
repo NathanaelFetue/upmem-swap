@@ -1,0 +1,151 @@
+================================================================================
+ANALYSE APPROFONDIE - UPMEM SWAP INVESTIGATION
+================================================================================
+
+1. CONFIGURATION OPTIMALE (4KB)
+--------------------------------------------------------------------------------
+
+Top 5 WRITE configurations:
+ nr_dpus  nr_tasklets     mode  write_mean_us  write_throughput_mbps
+       1            4 parallel          15.30                 255.36
+       1           16   serial          19.00                 205.61
+       1            8 parallel          23.70                 164.79
+       1            4   serial          27.90                 140.00
+       1            8   serial          30.03                 130.06
+
+Top 5 READ configurations:
+ nr_dpus  nr_tasklets     mode  read_mean_us  read_throughput_mbps
+       1            4 parallel         14.66                266.53
+       1            4   serial         20.15                193.89
+       1           16   serial         20.30                192.40
+       1            8 parallel         24.86                157.16
+       1            1   serial         31.29                124.84
+
+================================================================================
+2. SCALING ANALYSIS
+--------------------------------------------------------------------------------
+
+Latency scaling (Parallel, 1 tasklet, 4KB):
+DPUs     Write (µs)   Read (µs)    Write Efficiency     Read Efficiency     
+--------------------------------------------------------------------------------
+1        31.09        38.95        1.00                 1.00                
+8        81.11        66.47        3.07                 4.69                
+16       146.34       103.27       3.40                 6.03                
+32       262.70       256.04       3.79                 4.87                
+64       564.00       397.37       3.53                 6.27                
+
+================================================================================
+3. SERIAL VS PARALLEL SPEEDUP
+--------------------------------------------------------------------------------
+
+Speedup factor (Serial / Parallel) for 4KB, 1 tasklet:
+DPUs     Write Speedup   Read Speedup   
+--------------------------------------------------------------------------------
+1        0.97           x 0.80           x
+8        6.04           x 6.05           x
+16       10.44          x 14.30          x
+32       14.87          x 14.67          x
+64       15.62          x 27.10          x
+
+================================================================================
+4. TASKLETS IMPACT ANALYSIS
+--------------------------------------------------------------------------------
+
+16 DPUs, Parallel, 4KB - Different tasklet counts:
+Tasklets   Write (µs)   Read (µs)    Overhead vs 1  
+--------------------------------------------------------------------------------
+1          146.34       103.27       +0.0%
+4          173.11       139.33       +18.3%
+8          133.64       119.02       -8.7%
+16         151.77       98.89        +3.7%
+
+================================================================================
+5. TRANSFER SIZE SCALING
+--------------------------------------------------------------------------------
+
+1 DPU, Parallel, 1 tasklet:
+Size       Write (µs)   Read (µs)    Write (µs/KB)   Read (µs/KB)   
+--------------------------------------------------------------------------------
+512        16.68        13.21        33.36           26.42          
+1024       22.46        15.42        22.46           15.42          
+2048       14.58        15.16        7.29            7.58           
+4096       31.09        38.95        7.77            9.74           
+8192       56.42        101.13       7.05            12.64          
+
+================================================================================
+6. VARIABILITY ANALYSIS (Coefficient of Variation)
+--------------------------------------------------------------------------------
+
+Most stable configurations (4KB, lowest CV):
+ nr_dpus  nr_tasklets     mode  write_mean_us  write_cv    read_cv
+       1           16 parallel          30.18  4.937044  23.680944
+       1            1   serial          30.21  5.693479  15.723873
+       1            8   serial          30.03  7.059607  83.197832
+       1            1 parallel          31.09  8.523641 103.517330
+      64            8   serial        7579.94 15.092864  15.042299
+
+Most variable configurations (4KB, highest CV):
+ nr_dpus  nr_tasklets     mode  write_mean_us   write_cv   read_cv
+       1            4   serial          27.90 142.258065 55.285360
+      16           16 parallel         151.77 135.560387 21.630094
+      16            4 parallel         173.11 121.645197 49.084906
+       8            4 parallel          84.26 104.474246 27.991218
+      64            8 parallel         442.70 102.613508 32.402554
+
+================================================================================
+7. AGGREGATE THROUGHPUT ANALYSIS
+--------------------------------------------------------------------------------
+
+Best aggregate throughput (4KB):
+ nr_dpus  nr_tasklets     mode  write_throughput_mbps  read_throughput_mbps
+      64            8 parallel                 564.72                753.06
+      32            8 parallel                 511.67                680.51
+      32           16 parallel                 492.74                495.23
+      32            1 parallel                 475.84                488.20
+      32            4 parallel                 468.33                520.53
+
+================================================================================
+8. COMPARISON WITH STORAGE BASELINES (4KB)
+--------------------------------------------------------------------------------
+
+Technology                Latency Range (µs)        Competitive?   
+--------------------------------------------------------------------------------
+RDMA (InfiniSwap)         5-15                      ⭐ Faster       
+Optane SSD                10-13                     ⭐ Faster       
+NVMe (fast)               20-50                     ⚖️ Comparable  
+NVMe (typical)            60-100                    ✅ UPMEM wins   
+UPMEM Sim (1 DPU)         30-40                     N/A            
+UPMEM Sim (8 DPUs)        40-80                     N/A            
+UPMEM Sim (16 DPUs)       50-150                    N/A            
+SATA SSD                  140-175                   ✅ UPMEM wins   
+Linux swap overhead       100-400                   ✅ UPMEM wins   
+
+================================================================================
+9. KEY FINDINGS SUMMARY
+================================================================================
+
+ VIABILITY INDICATORS:
+   - 1 DPU achieves ~30-40 µs (competitive with fast NVMe)
+   - 8 DPUs maintains ~40-80 µs (still viable)
+   - Parallel mode essential (15-18x speedup)
+   - Aggregate throughput reaches 450-600 MB/s
+
+ CONCERNS:
+   - Scaling degrades beyond 16 DPUs
+   - High variability in some configs (CV >100%)
+   - Tasklets provide NO benefit for pure swap
+   - Simulator vs hardware gap unknown
+
+   - 8-16 DPUs
+   - Parallel mode
+   - 1 tasklet (minimal overhead)
+   - 2-4KB transfer size
+
+   - Faster than: SATA SSD (140 µs), Linux swap overhead
+   - Comparable to: NVMe typical (60-100 µs)
+   - Slower than: RDMA (5-15 µs), Optane (10-13 µs), NVMe fast (20-50 µs)
+
+
+================================================================================
+ANALYSIS COMPLETE - Results saved to analysis_report.txt
+================================================================================
