@@ -16,3 +16,4 @@ __pycache__/
 
 prompter.sh
 project_context.txt
+simulator_dump.txt
