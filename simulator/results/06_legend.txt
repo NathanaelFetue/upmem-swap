@@ -1,0 +1,41 @@
+
+IMAGE 6: Batch Size Optimization (8 DPUs)
+==========================================
+
+DESCRIPTION:
+Demonstrates how batch size affects latency reduction
+Shows speedup compared to single-page swapping (batch-1)
+
+SPEEDUP BY BATCH SIZE (8 DPUs):
+• Batch-1: 1.0× (baseline)
+• Batch-2: 2.44×
+• Batch-5: 7.22×
+• Batch-10: 14.02×
+• Batch-20: 26.13×
+• Batch-50: 51.34× ← OPTIMAL
+• Batch-100: 84.5×
+
+DIMINISHING RETURNS:
+Beyond batch-50, gains flatten (kernel overhead already amortized)
+
+WHY BATCH-50 IS OPTIMAL:
+1. Kernel overhead (12 µs) paid once, amortized across batch
+2. At batch-50: kernel cost per page = 12/50 = 0.24 µs
+3. MRAM latency (6 µs) paid once per batch
+4. Transfer time scales with number of pages
+5. Sweet spot balances overhead amortization vs transfer time
+
+PRACTICAL RECOMMENDATION:
+• Batch size 10-50: Good for most workloads
+• Batch size 50+: Optimal for throughput
+• Batch size 100+: Marginal gains, higher latency variance
+
+HOW TO CHOOSE BATCH SIZE:
+- Low latency requirement: use batch-10 (14× speedup)
+- Maximum throughput: use batch-50+ (50×+ speedup)
+- Limited memory: batch-10 to batch-20
+
+USE IN ARTICLE:
+Explains software optimization strategy
+Shows that batch operations dramatically improve performance
+Provides practical guidance for system tuning

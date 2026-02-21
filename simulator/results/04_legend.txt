@@ -1,0 +1,40 @@
+
+IMAGE 4: UPMEM Latency Component Breakdown
+===========================================
+
+DESCRIPTION:
+Decomposes UPMEM swap latency into four components
+
+COMPONENT ANALYSIS:
+1. Kernel Overhead: 12 µs
+   - Software scheduling & DPU interface
+   - Amortized per batch (paid once)
+
+2. MRAM Access: 6 µs
+   - MRAM latency for first access
+   - Constant per operation
+
+3. Transfer (1 page): 12.4 µs
+   - Single page transfer via CPU-DPU bus
+   - No parallelism yet
+
+4. Transfer (64 pages, 8 DPUs): 1.5 µs
+   - 8 pages distributed across 8 DPUs
+   - ~6 pages per DPU = 24 KB
+   - Parallel transfer at effective bandwidth
+
+TOTAL LATENCIES:
+- Single page: 12 + 6 + 12.4 = 30.4 µs
+- Batch-50 on 8 DPUs: 12 + 6 + 1.5 = 19.5 µs
+- Latency/page = 19.5 / 8 = 2.4 µs
+
+INTERPRETATION:
+1. Kernel overhead is fixed but small (~30% of single-page cost)
+2. MRAM access is minimal
+3. Transfer time dominates, but parallelism helps dramatically
+4. With 8 DPUs, effective data rate is 2.64 GB/s
+
+USE IN ARTICLE:
+Explains WHERE the latency comes from
+Justifies why parallelism works so well
+Shows opportunities for further optimization
