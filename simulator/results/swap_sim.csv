@@ -1,2 +1,0 @@
-nr_dpus,ram_mb,working_set,pattern,total_accesses,page_faults,swapouts,swapins,avg_swapout_us,avg_swapin_us,hit_rate
-4,4,5000,random,50000,39976,38952,34977,29.59,49.85,20.05
