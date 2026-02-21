@@ -9,11 +9,11 @@ sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (12, 8)
 
 # Load data
-df = pd.read_csv('benchmark_results.csv')
+df = pd.read_csv('../benchmark_results.csv')
 
-# Create output directory
+# Create output directory at ROOT level
 import os
-os.makedirs('plots', exist_ok=True)
+os.makedirs('../plots', exist_ok=True)
 
 # 1. Latency vs Size (by DPU count)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
@@ -36,7 +36,7 @@ ax2.legend()
 ax2.grid(True)
 
 plt.tight_layout()
-plt.savefig('plots/01_latency_vs_size.png', dpi=300)
+plt.savefig('../plots/01_latency_vs_size.png', dpi=300)
 plt.close()
 
 # 2. Serial vs Parallel Comparison
@@ -61,26 +61,83 @@ ax2.legend()
 ax2.grid(True)
 
 plt.tight_layout()
-plt.savefig('plots/02_serial_vs_parallel.png', dpi=300)
+plt.savefig('../plots/02_serial_vs_parallel.png', dpi=300)
 plt.close()
 
-# 3. Throughput vs DPU count
-fig, ax = plt.subplots(figsize=(12, 6))
+# 3. Throughput vs DPU count - ALL 5 SIZES (MODIFIED!)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-for mode in ['serial', 'parallel']:
-    data = df[(df['size'] == 4096) & (df['mode'] == mode) & (df['nr_tasklets'] == 1)]
-    ax.plot(data['nr_dpus'], data['write_throughput_mbps'], 
-            marker='o', label=f'{mode.capitalize()} Write')
-    ax.plot(data['nr_dpus'], data['read_throughput_mbps'],
-            marker='s', linestyle='--', label=f'{mode.capitalize()} Read')
+# Define colors and markers for each size
+colors = {
+    512: '#1f77b4',   # Blue
+    1024: '#ff7f0e',  # Orange
+    2048: '#2ca02c',  # Green
+    4096: '#d62728',  # Red (emphasis on 4KB)
+    8192: '#9467bd'   # Purple
+}
 
-ax.set_xlabel('Number of DPUs')
-ax.set_ylabel('Throughput (MB/s)')
-ax.set_title('Aggregate Throughput vs DPU Count (4KB transfers)')
-ax.legend()
-ax.grid(True)
+markers = {
+    512: 'o',
+    1024: 's',
+    2048: '^',
+    4096: 'D',  # Diamond for 4KB
+    8192: 'v'
+}
+
+sizes = sorted(df['size'].unique())
+
+# Plot WRITE throughput
+for size in sizes:
+    data = df[(df['size'] == size) & (df['mode'] == 'parallel') & 
+              (df['nr_tasklets'] == 1)].sort_values('nr_dpus')
+    
+    if len(data) > 0:
+        size_kb = size // 1024 if size >= 1024 else size
+        size_label = f'{size_kb}KB' if size >= 1024 else f'{size}B'
+        
+        ax1.plot(data['nr_dpus'], data['write_throughput_mbps'], 
+                marker=markers.get(size, 'o'), 
+                linewidth=2.5 if size == 4096 else 2,
+                markersize=10 if size == 4096 else 8,
+                label=size_label,
+                color=colors.get(size, 'gray'),
+                alpha=1.0 if size == 4096 else 0.85)
+
+ax1.set_xlabel('Number of DPUs', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Throughput (MB/s)', fontsize=12, fontweight='bold')
+ax1.set_title('WRITE Throughput - Parallel Mode (1 Tasklet)', fontsize=13, fontweight='bold')
+ax1.legend(loc='lower right', fontsize=10, framealpha=0.95)
+ax1.grid(True, alpha=0.3)
+ax1.set_ylim(bottom=0)
+
+# Plot READ throughput
+for size in sizes:
+    data = df[(df['size'] == size) & (df['mode'] == 'parallel') & 
+              (df['nr_tasklets'] == 1)].sort_values('nr_dpus')
+    
+    if len(data) > 0:
+        size_kb = size // 1024 if size >= 1024 else size
+        size_label = f'{size_kb}KB' if size >= 1024 else f'{size}B'
+        
+        ax2.plot(data['nr_dpus'], data['read_throughput_mbps'], 
+                marker=markers.get(size, 'o'), 
+                linewidth=2.5 if size == 4096 else 2,
+                markersize=10 if size == 4096 else 8,
+                label=size_label,
+                color=colors.get(size, 'gray'),
+                alpha=1.0 if size == 4096 else 0.85)
+
+ax2.set_xlabel('Number of DPUs', fontsize=12, fontweight='bold')
+ax2.set_ylabel('Throughput (MB/s)', fontsize=12, fontweight='bold')
+ax2.set_title('READ Throughput - Parallel Mode (1 Tasklet)', fontsize=13, fontweight='bold')
+ax2.legend(loc='lower right', fontsize=10, framealpha=0.95)
+ax2.grid(True, alpha=0.3)
+ax2.set_ylim(bottom=0)
+
+plt.suptitle('Aggregate Throughput: All 5 Transfer Sizes (Parallel, 1 Tasklet)', 
+             fontsize=14, fontweight='bold', y=1.00)
 plt.tight_layout()
-plt.savefig('plots/03_throughput_scaling.png', dpi=300)
+plt.savefig('../plots/03_throughput_scaling.png', dpi=300, bbox_inches='tight')
 plt.close()
 
 # 4. Heatmap: DPUs × Size (Parallel Write)
@@ -94,7 +151,7 @@ ax.set_title('WRITE Latency Heatmap (µs): DPUs × Size (Parallel)')
 ax.set_xlabel('Transfer Size (bytes)')
 ax.set_ylabel('Number of DPUs')
 plt.tight_layout()
-plt.savefig('plots/04_heatmap_write.png', dpi=300)
+plt.savefig('../plots/04_heatmap_write.png', dpi=300)
 plt.close()
 
 # 5. Tasklets Impact
@@ -120,7 +177,7 @@ ax2.legend()
 ax2.grid(True)
 
 plt.tight_layout()
-plt.savefig('plots/05_tasklets_impact.png', dpi=300)
+plt.savefig('../plots/05_tasklets_impact.png', dpi=300)
 plt.close()
 
 # 6. Speedup: Parallel vs Serial
@@ -140,14 +197,14 @@ ax.set_title('Parallel Speedup vs Serial (WRITE)')
 ax.legend()
 ax.grid(True)
 plt.tight_layout()
-plt.savefig('plots/06_speedup.png', dpi=300)
+plt.savefig('../plots/06_speedup.png', dpi=300)
 plt.close()
 
-print("✓ All plots generated in ./plots/")
+print("✓ All plots generated in ../plots/ (root level)")
 print("\nGenerated plots:")
 print("  01_latency_vs_size.png - Latency scaling with transfer size")
 print("  02_serial_vs_parallel.png - Serial vs Parallel comparison")
-print("  03_throughput_scaling.png - Aggregate throughput")
+print("  03_throughput_scaling.png - Aggregate throughput (ALL 5 SIZES!)")
 print("  04_heatmap_write.png - Latency heatmap")
 print("  05_tasklets_impact.png - Impact of tasklets")
 print("  06_speedup.png - Parallel speedup")
