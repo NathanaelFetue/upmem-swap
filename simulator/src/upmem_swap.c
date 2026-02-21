@@ -148,6 +148,12 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     uint32_t dpu_id = mgr->next_dpu;
     mgr->next_dpu = (mgr->next_dpu + 1) % mgr->nr_dpus;
     
+    /* Defensive validation */
+    if (dpu_id >= mgr->nr_dpus) {
+        fprintf(stderr, "Erreur: DPU ID %u >= nr_dpus %u\n", dpu_id, mgr->nr_dpus);
+        return -1;
+    }
+    
     dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
     
     /* Check si espace disponible */
@@ -285,4 +291,149 @@ double upmem_swap_get_avg_swapin_us(upmem_swap_manager_t *mgr)
         return 0.0;
     }
     return mgr->total_swapin_time_us / mgr->total_swapins;
+}
+
+/* ===== BATCH OPERATIONS (Optimization) ===== */
+
+/*
+ * Batch swap out: Transfer multiple pages in single operation
+ * 
+ * Performance model:
+ *   Single page:  12 + 6 + 12.4 = 30.4 µs (overhead-per-page)
+ *   Batch N pages: 12 + 6 + (12.4 * N) = 18 + 12.4N µs (amortized)
+ *   
+ *   Example: 10 pages
+ *   - Sequential: 10 × 30 = 300 µs
+ *   - Batch:     18 + 124 = 142 µs (2.1× speedup!)
+ */
+int upmem_swap_out_batch(upmem_swap_manager_t *mgr, 
+                        page_entry_t **pages,
+                        void **data, 
+                        uint32_t count)
+{
+    if (!mgr || !pages || !data || count == 0) {
+        return -1;
+    }
+    
+    /* Validate all pages */
+    for (uint32_t i = 0; i < count; i++) {
+        if (!pages[i] || !data[i]) {
+            fprintf(stderr, "Erreur batch: page %u invalide\n", i);
+            return -1;
+        }
+    }
+    
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    
+    /* Calculate batch transfer latency
+     * Batch reduces per-page overhead by amortizing kernel/setup cost
+     */
+    uint32_t total_size = count * PAGE_SIZE;
+    
+    /* Latency model for batch:
+     * - Kernel overhead: 12 µs (paid once, not per-page)
+     * - MRAM latency: 6 µs (per first page access)
+     * - Transfer: depends on total size
+     */
+    double overhead = 12.0;  /* Paid once for whole batch */
+    double mram_lat = upmem_mram_latency_us(PAGE_SIZE, 0);  /* First page */
+    double batch_transfer_us = upmem_host_transfer_latency_us(total_size, 0);
+    
+    double latency_us = overhead + mram_lat + batch_transfer_us;
+    
+    /* Add jitter */
+    double jitter = (latency_us * 0.05) * ((rand() % 101 - 50) / 50.0);
+    double total_us = latency_us + jitter;
+    
+    gettimeofday(&end, NULL);
+    
+    /* Allocate space and update pages */
+    uint32_t first_dpu = mgr->next_dpu;
+    
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t dpu_id = (first_dpu + i) % mgr->nr_dpus;
+        dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
+        
+        if (dpu->free_offset + PAGE_SIZE > DPU_MRAM_SIZE) {
+            fprintf(stderr, "Erreur batch: MRAM plein sur DPU %u\n", dpu_id);
+            return -1;
+        }
+        
+        pages[i]->status = PAGE_IN_SWAP;
+        pages[i]->dpu_id = dpu_id;
+        pages[i]->dpu_offset = dpu->free_offset;
+        dpu->free_offset += PAGE_SIZE;
+        
+        DEBUG_PRINT("Batch swap out: page %u → DPU %u", pages[i]->page_id, dpu_id);
+    }
+    
+    /* Update next_dpu for round-robin */
+    mgr->next_dpu = (first_dpu + count) % mgr->nr_dpus;
+    
+    /* Statistics */
+    mgr->batch_swapouts++;
+    mgr->total_batch_swapout_time_us += total_us;
+    
+    DEBUG_PRINT("Batch swap out: %u pages in %.2f µs", count, total_us);
+    
+    return 0;
+}
+
+/*
+ * Batch swap in: Transfer multiple pages from MRAM back to RAM
+ */
+int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
+                       page_entry_t **pages,
+                       void **data,
+                       uint32_t count)
+{
+    if (!mgr || !pages || !data || count == 0) {
+        return -1;
+    }
+    
+    /* Validate all pages */
+    for (uint32_t i = 0; i < count; i++) {
+        if (!pages[i] || !data[i]) {
+            fprintf(stderr, "Erreur batch: page %u invalide\n", i);
+            return -1;
+        }
+        if (pages[i]->status != PAGE_IN_SWAP) {
+            fprintf(stderr, "Erreur batch: page %u not in SWAP\n", pages[i]->page_id);
+            return -1;
+        }
+    }
+    
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    
+    /* Calculate batch transfer latency for read */
+    uint32_t total_size = count * PAGE_SIZE;
+    
+    double overhead = 12.0;  /* Paid once */
+    double mram_lat = upmem_mram_latency_us(PAGE_SIZE, 1);  /* First page read */
+    double batch_transfer_us = upmem_host_transfer_latency_us(total_size, 1);
+    
+    double latency_us = overhead + mram_lat + batch_transfer_us;
+    
+    /* Add jitter */
+    double jitter = (latency_us * 0.05) * ((rand() % 101 - 50) / 50.0);
+    double total_us = latency_us + jitter;
+    
+    gettimeofday(&end, NULL);
+    
+    /* Update pages */
+    for (uint32_t i = 0; i < count; i++) {
+        pages[i]->status = PAGE_IN_RAM;
+        DEBUG_PRINT("Batch swap in: page %u ← DPU %u", 
+                   pages[i]->page_id, pages[i]->dpu_id);
+    }
+    
+    /* Statistics */
+    mgr->batch_swapins++;
+    mgr->total_batch_swapin_time_us += total_us;
+    
+    DEBUG_PRINT("Batch swap in: %u pages in %.2f µs", count, total_us);
+    
+    return 0;
 }

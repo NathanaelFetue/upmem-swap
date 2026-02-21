@@ -24,6 +24,12 @@ typedef struct {
     uint64_t total_swapins;
     double total_swapout_time_us;
     double total_swapin_time_us;
+    
+    /* Batch statistics */
+    uint64_t batch_swapouts;
+    uint64_t batch_swapins;
+    double total_batch_swapout_time_us;
+    double total_batch_swapin_time_us;
 } upmem_swap_manager_t;
 
 /* Initialise gestionnaire swap */
@@ -48,5 +54,17 @@ double upmem_swap_get_avg_swapout_us(upmem_swap_manager_t *mgr);
 
 /* Get moyenne latence swap in */
 double upmem_swap_get_avg_swapin_us(upmem_swap_manager_t *mgr);
+
+/* Batch swap out: Multiple pages in single operation */
+int upmem_swap_out_batch(upmem_swap_manager_t *mgr, 
+                        page_entry_t **pages,
+                        void **data, 
+                        uint32_t count);
+
+/* Batch swap in: Multiple pages in single operation */
+int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
+                       page_entry_t **pages,
+                       void **data,
+                       uint32_t count);
 
 #endif /* UPMEM_SWAP_H */

@@ -23,10 +23,15 @@ typedef struct {
     uint64_t page_faults;
     uint64_t swapouts;
     uint64_t swapins;
+    uint64_t prefetch_hits;     /* Prefetch improvements */
     double total_fault_time_us;
     
     /* Pour patterns */
     uint32_t sequential_index;
+    
+    /* Optimisations */
+    int enable_prefetch;        /* 0=off, 1=for sequential, 2=always */
+    uint32_t prefetch_distance; /* Combien de pages look-ahead */
 } workload_simulator_t;
 
 /* Initialise workload */
