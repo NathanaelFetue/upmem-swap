@@ -11,7 +11,17 @@
 typedef struct {
     uint32_t dpu_id;
     uint64_t free_offset;       /* Prochain offset libre dans MRAM */
+    /* Free list for reclaimed MRAM blocks (offset, size) */
+    struct free_block *free_list;
+    uint32_t nr_pages_stored;
 } dpu_swap_state_t;
+
+/* Free block descriptor for MRAM per-DPU free list */
+typedef struct free_block {
+    uint64_t offset;
+    uint32_t size;
+    struct free_block *next;
+} free_block_t;
 
 typedef struct {
     /* DPU set (simulé) */

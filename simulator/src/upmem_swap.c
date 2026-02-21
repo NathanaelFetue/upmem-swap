@@ -99,6 +99,71 @@ static double simulate_upmem_latency_us(uint32_t size_bytes, int is_read)
     return total + jitter;
 }
 
+/* ===== Helpers: allocation and free-list management per DPU ===== */
+static int allocate_block_from_dpu(dpu_swap_state_t *dpu, uint32_t size, uint64_t *offset_out)
+{
+    /* Try free list first (first-fit) */
+    free_block_t *prev = NULL;
+    free_block_t *b = dpu->free_list;
+    while (b) {
+        if (b->size >= size) {
+            *offset_out = b->offset;
+            if (b->size == size) {
+                /* remove block */
+                if (prev) prev->next = b->next;
+                else dpu->free_list = b->next;
+                free(b);
+            } else {
+                /* carve from head */
+                b->offset += size;
+                b->size -= size;
+            }
+            dpu->nr_pages_stored += 1;
+            return 0;
+        }
+        prev = b;
+        b = b->next;
+    }
+
+    /* Fallback: use free_offset if space */
+    if (dpu->free_offset + size <= DPU_MRAM_SIZE) {
+        *offset_out = dpu->free_offset;
+        dpu->free_offset += size;
+        dpu->nr_pages_stored += 1;
+        return 0;
+    }
+
+    return -1; /* no space */
+}
+
+static void mark_space_free(upmem_swap_manager_t *mgr, uint32_t dpu_id, uint64_t offset, uint32_t size)
+{
+    if (!mgr || dpu_id >= mgr->nr_dpus) return;
+    dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
+    free_block_t *b = (free_block_t *)malloc(sizeof(free_block_t));
+    if (!b) return;
+    b->offset = offset;
+    b->size = size;
+    b->next = dpu->free_list;
+    dpu->free_list = b;
+    if (dpu->nr_pages_stored > 0) dpu->nr_pages_stored -= 1;
+}
+
+/* Find a DPU with space for one page; returns UINT32_MAX if none */
+static uint32_t find_available_dpu(upmem_swap_manager_t *mgr)
+{
+    if (!mgr) return UINT32_MAX;
+    uint32_t start = mgr->next_dpu;
+    for (uint32_t i = 0; i < mgr->nr_dpus; i++) {
+        uint32_t id = (start + i) % mgr->nr_dpus;
+        dpu_swap_state_t *dpu = &mgr->dpu_states[id];
+        /* Check free list or free_offset */
+        if (dpu->free_list != NULL) return id;
+        if (dpu->free_offset + PAGE_SIZE <= DPU_MRAM_SIZE) return id;
+    }
+    return UINT32_MAX;
+}
+
 upmem_swap_manager_t* upmem_swap_init(uint32_t nr_dpus)
 {
     upmem_swap_manager_t *mgr = (upmem_swap_manager_t *)malloc(sizeof(upmem_swap_manager_t));
@@ -125,6 +190,8 @@ upmem_swap_manager_t* upmem_swap_init(uint32_t nr_dpus)
     for (uint32_t i = 0; i < nr_dpus; i++) {
         mgr->dpu_states[i].dpu_id = i;
         mgr->dpu_states[i].free_offset = 0;
+        mgr->dpu_states[i].free_list = NULL;
+        mgr->dpu_states[i].nr_pages_stored = 0;
     }
     
     DEBUG_PRINT("UPMEM Swap Manager initialisé: %u DPUs", nr_dpus);
@@ -144,23 +211,13 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
         return -1;
     }
     
-    /* Sélectionne DPU en round-robin */
-    uint32_t dpu_id = mgr->next_dpu;
-    mgr->next_dpu = (mgr->next_dpu + 1) % mgr->nr_dpus;
-    
-    /* Defensive validation */
-    if (dpu_id >= mgr->nr_dpus) {
-        fprintf(stderr, "Erreur: DPU ID %u >= nr_dpus %u\n", dpu_id, mgr->nr_dpus);
+    /* Find a DPU with space (search & skip full DPUs) */
+    uint32_t dpu_id = find_available_dpu(mgr);
+    if (dpu_id == UINT32_MAX) {
+        fprintf(stderr, "Erreur: Tous les DPUs sont pleins\n");
         return -1;
     }
-    
     dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
-    
-    /* Check si espace disponible */
-    if (dpu->free_offset + PAGE_SIZE > DPU_MRAM_SIZE) {
-        fprintf(stderr, "Erreur: MRAM plein sur DPU %u\n", dpu_id);
-        return -1;
-    }
     
     /* Simule transfer + mesure latence */
     struct timeval start, end;
@@ -178,15 +235,24 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     /* Prend le max pour compter la latence simulée */
     double total_us = (actual_us < latency_us) ? latency_us : actual_us;
     
+    /* Allocate space (from free-list or free_offset) */
+    uint64_t alloc_offset = 0;
+    if (allocate_block_from_dpu(dpu, PAGE_SIZE, &alloc_offset) != 0) {
+        fprintf(stderr, "Erreur: impossible d'allouer espace sur DPU %u\n", dpu_id);
+        return -1;
+    }
+
     /* Update page entry */
     page->status = PAGE_IN_SWAP;
     page->dpu_id = dpu_id;
-    page->dpu_offset = dpu->free_offset;
-    
+    page->dpu_offset = alloc_offset;
+
     /* Increment stats */
     mgr->total_swapouts++;
     mgr->total_swapout_time_us += total_us;
-    dpu->free_offset += PAGE_SIZE;
+
+    /* Advance next_dpu to continue round-robin from next slot */
+    mgr->next_dpu = (dpu_id + 1) % mgr->nr_dpus;
     
     DEBUG_PRINT("Swap out: page %u → DPU %u offset %lu (latency %.2f µs)",
                 page->page_id, dpu_id, dpu->free_offset - PAGE_SIZE, total_us);
@@ -235,6 +301,8 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
     
     /* Update page entry */
     page->status = PAGE_IN_RAM;
+    /* Free MRAM space previously used by this page */
+    mark_space_free(mgr, dpu_id, page->dpu_offset, PAGE_SIZE);
     
     /* Increment stats */
     mgr->total_swapins++;
@@ -272,8 +340,18 @@ void upmem_swap_stats_print(upmem_swap_manager_t *mgr)
 void upmem_swap_destroy(upmem_swap_manager_t *mgr)
 {
     if (!mgr) return;
-    
-    if (mgr->dpu_states) free(mgr->dpu_states);
+    if (mgr->dpu_states) {
+        /* Free per-DPU free lists */
+        for (uint32_t i = 0; i < mgr->nr_dpus; i++) {
+            free_block_t *b = mgr->dpu_states[i].free_list;
+            while (b) {
+                free_block_t *n = b->next;
+                free(b);
+                b = n;
+            }
+        }
+        free(mgr->dpu_states);
+    }
     free(mgr);
 }
 
@@ -349,27 +427,31 @@ int upmem_swap_out_batch(upmem_swap_manager_t *mgr,
     gettimeofday(&end, NULL);
     
     /* Allocate space and update pages */
-    uint32_t first_dpu = mgr->next_dpu;
-    
+    uint32_t last_alloc = mgr->next_dpu;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t dpu_id = (first_dpu + i) % mgr->nr_dpus;
-        dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
-        
-        if (dpu->free_offset + PAGE_SIZE > DPU_MRAM_SIZE) {
-            fprintf(stderr, "Erreur batch: MRAM plein sur DPU %u\n", dpu_id);
+        uint32_t dpu_id = find_available_dpu(mgr);
+        if (dpu_id == UINT32_MAX) {
+            fprintf(stderr, "Erreur batch: aucun DPU avec espace disponible\n");
             return -1;
         }
-        
+        dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
+
+        uint64_t alloc_offset = 0;
+        if (allocate_block_from_dpu(dpu, PAGE_SIZE, &alloc_offset) != 0) {
+            fprintf(stderr, "Erreur batch: impossible d'allouer sur DPU %u\n", dpu_id);
+            return -1;
+        }
+
         pages[i]->status = PAGE_IN_SWAP;
         pages[i]->dpu_id = dpu_id;
-        pages[i]->dpu_offset = dpu->free_offset;
-        dpu->free_offset += PAGE_SIZE;
-        
+        pages[i]->dpu_offset = alloc_offset;
+
         DEBUG_PRINT("Batch swap out: page %u → DPU %u", pages[i]->page_id, dpu_id);
+        last_alloc = dpu_id;
     }
-    
-    /* Update next_dpu for round-robin */
-    mgr->next_dpu = (first_dpu + count) % mgr->nr_dpus;
+
+    /* Update next_dpu for round-robin after batch */
+    mgr->next_dpu = (last_alloc + 1) % mgr->nr_dpus;
     
     /* Statistics */
     mgr->batch_swapouts++;
@@ -425,6 +507,8 @@ int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
     /* Update pages */
     for (uint32_t i = 0; i < count; i++) {
         pages[i]->status = PAGE_IN_RAM;
+        /* Reclaim MRAM space for each page */
+        mark_space_free(mgr, pages[i]->dpu_id, pages[i]->dpu_offset, PAGE_SIZE);
         DEBUG_PRINT("Batch swap in: page %u ← DPU %u", 
                    pages[i]->page_id, pages[i]->dpu_id);
     }
