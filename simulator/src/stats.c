@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "stats.h"
+#include "ssd_baseline.h"
 
 /* ===== Implémentation: Collecteur Statistiques ===== */
 
@@ -68,13 +69,19 @@ void stats_print(swap_stats_t *stats)
     printf("\n");
     
     printf("Comparison:\n");
-    printf("  UPMEM avg: %.2f µs\n", (stats->avg_swapout_us + stats->avg_swapin_us) / 2.0);
-    printf("  SSD (literature): 60-200 µs\n");
-    printf("  zram (literature): 20-50 µs\n");
-    printf("  InfiniSwap (RDMA): ~30 µs\n");
+    double upmem_avg = (stats->avg_swapout_us + stats->avg_swapin_us) / 2.0;
+    printf("  UPMEM average: %.2f µs\n", upmem_avg);
+    
+    double ssd_sata = ssd_page_fault_latency_us(SSD_TYPE_SATA, 4096);
+    double ssd_nvme = ssd_page_fault_latency_us(SSD_TYPE_NVME, 4096);
+    double ssd_hdd = ssd_page_fault_latency_us(SSD_TYPE_HDD, 4096);
+    
+    printf("  SSD SATA: %.2f µs (speedup: %.2f×)\n", ssd_sata, ssd_sata / upmem_avg);
+    printf("  SSD NVMe: %.2f µs (speedup: %.2f×)\n", ssd_nvme, ssd_nvme / upmem_avg);
+    printf("  HDD 7200: %.2f µs (speedup: %.2f×)\n", ssd_hdd, ssd_hdd / upmem_avg);
     printf("\n");
     
-    double speedup_vs_ssd = 100.0 / ((stats->avg_swapout_us + stats->avg_swapin_us) / 2.0);
-    printf("  Speedup vs SSD (100 µs baseline): %.2f×\n", speedup_vs_ssd);
+    printf("Breakdown (ETH Zürich model):\n");
+    ssd_print_breakdown(SSD_TYPE_SATA);
     printf("\n");
 }

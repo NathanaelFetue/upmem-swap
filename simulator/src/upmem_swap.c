@@ -7,23 +7,96 @@
 
 /* ===== Implémentation: Gestionnaire UPMEM Swap ===== */
 
-/* Helper: mesure latence accès UPMEM (simulation) */
-static double simulate_upmem_latency_us(uint32_t size_bytes)
+/* 
+ * Latence UPMEM basée sur ETH Zürich paper:
+ * 
+ * Source: "Benchmarking a New Paradigm: An Experimental Analysis of a Real
+ * Processing-in-Memory Architecture" (Gómez-Luna et al., ETH Zürich)
+ * 
+ * Modèle MRAM interne (cycles):
+ *   Read:  α=77 + β×size, où β=0.5 cycles/B @ 350 MHz
+ *   Write: α=61 + β×size, où β=0.5 cycles/B @ 350 MHz
+ * 
+ * Latence HOST↔DPU (mesuré):
+ *   HOST→DPU (write): 0.33 GB/s bandwidth = 12.4 µs pour 4KB
+ *   DPU→HOST (read):  0.12 GB/s bandwidth = 34.1 µs pour 4KB (asymétrique)
+ * 
+ * Pour un swap, compter:
+ *   1. MRAM internal latency (6-7 µs)
+ *   2. HOST-DPU transfer (12.4 ou 34.1 µs)
+ *   3. Overhead kernel (~10-15 µs) - voir kernel_overhead_us()
+ */
+
+static double upmem_kernel_overhead_us(void)
 {
     /* 
-     * Basé sur les benchmarks:
-     * 4KB: ~25-31 µs
-     * Approximation linéaire: ~6-7 µs/KB + overhead
+     * Overhead for complete page fault:
+     * - Hardware exception: ~1.4 µs
+     * - Context save/restore: X2 ~6 µs
+     * - Page table lookup: ~1.4 µs
+     * - Swap identification: ~0.3 µs
+     * - Interrupt handling: ~3 µs
+     * Total: ~12 µs constant overhead
      */
-    double base_latency = 10.0;      /* Base overhead en µs */
-    double per_kb_latency = 6.5;     /* µs par KB */
-    double size_kb = size_bytes / 1024.0;
-    double latency_us = base_latency + (size_kb * per_kb_latency);
+    return 12.0;
+}
+
+static double upmem_mram_latency_us(uint32_t size_bytes, int is_read)
+{
+    /* 
+     * MRAM internal latency model (ETH paper, Fig. 3.2.1):
+     * Latency(cycles) = alpha + beta * size
+     * 
+     * @ 350 MHz frequency:
+     * - read:  alpha=77, beta=0.5 cycles/B
+     * - write: alpha=61, beta=0.5 cycles/B
+     * 
+     * Conversion: 1 cycle @ 350 MHz = 1/(350*1e6) seconds = 1/350 µs
+     */
+    const double freq_mhz = 350.0;
+    const double alpha_read = 77.0;
+    const double alpha_write = 61.0;
+    const double beta = 0.5;  /* cycles per byte */
     
-    /* Ajoute petit bruit pour réalisme */
-    latency_us += (rand() % 5) - 2;  /* ±2 µs */
+    double alpha = is_read ? alpha_read : alpha_write;
+    double latency_cycles = alpha + (beta * size_bytes);
     
-    return latency_us;
+    /* cycles to µs: cycles / (freq_mhz) */
+    return latency_cycles / freq_mhz;
+}
+
+static double upmem_host_transfer_latency_us(uint32_t size_bytes, int is_read)
+{
+    /* 
+     * HOST↔DPU bandwidth measured (ETH paper, page 14, section 3.3):
+     * - HOST→DPU (write): 0.33 GB/s (uses AVX writes, async)
+     * - DPU→HOST (read):  0.12 GB/s (uses AVX reads, sync - slower!)
+     * 
+     * Asymmetry (3x difference) explained: reads are synchronous,
+     * forcing CPU to wait. Writes are asynchronous (fire-and-forget).
+     */
+    double bandwidth_gbs = is_read ? 0.12 : 0.33;
+    double size_gb = size_bytes / (1024.0 * 1024.0 * 1024.0);
+    
+    return (size_gb / bandwidth_gbs) * 1e6;  /* seconds → µs */
+}
+
+static double simulate_upmem_latency_us(uint32_t size_bytes, int is_read)
+{
+    /* 
+     * Simplified model combining all components:
+     * Total = kernel_overhead + mram_latency + host_transfer
+     */
+    double overhead = upmem_kernel_overhead_us();
+    double mram_lat = upmem_mram_latency_us(size_bytes, is_read);
+    double host_lat = upmem_host_transfer_latency_us(size_bytes, is_read);
+    
+    double total = overhead + mram_lat + host_lat;
+    
+    /* Add realistic jitter (±5% variation) */
+    double jitter = (total * 0.05) * ((rand() % 101 - 50) / 50.0);
+    
+    return total + jitter;
 }
 
 upmem_swap_manager_t* upmem_swap_init(uint32_t nr_dpus)
@@ -87,7 +160,7 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    double latency_us = simulate_upmem_latency_us(PAGE_SIZE);
+    double latency_us = simulate_upmem_latency_us(PAGE_SIZE, 0);  /* write=0 (CPU→MRAM) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Pas de memcpy réel ici */
@@ -142,7 +215,7 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    double latency_us = simulate_upmem_latency_us(PAGE_SIZE);
+    double latency_us = simulate_upmem_latency_us(PAGE_SIZE, 1);  /* read=1 (MRAM→CPU) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Transfer simulé */

@@ -20,7 +20,7 @@ endif
 
 # Source files
 SOURCES = src/main.c src/memory_sim.c src/page_table.c \
-          src/upmem_swap.c src/workload.c src/stats.c
+          src/upmem_swap.c src/workload.c src/stats.c src/ssd_baseline.c
 HEADERS = src/*.h
 OBJECTS = $(SOURCES:.c=.o)
 
