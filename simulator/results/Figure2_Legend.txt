@@ -1,0 +1,35 @@
+FIGURE 2: BÉNÉFICE DE LA PARALLÉLISATION (4KB PAGES)
+======================================================
+
+TITRE COURT (pour caption article):
+"Speedup du Mode Parallèle vs Mode Séquentiel"
+
+LÉGENDE COMPLÈTE (à utiliser dans le texte):
+Cette figure montre le facteur d'accélération (speedup) de notre mode PARALLÈLE
+comparé au mode séquentiel pour les transferts 4KB pages:
+
+INTERPRÉTATION DES DONNÉES:
+- 1 DPU: speedup ~1× (pas de parallélisation possible avec 1 seul DPU)
+- 8 DPU: speedup 6× en écriture, 6× en lecture (SWEET SPOT RECOMMANDÉ)
+- 16 DPU: speedup 10× en écriture, 14× en lecture (toujours bon)
+- 32 DPU: speedup 15× en écriture, 15× en lecture (dégradation mineure)
+- 64 DPU: speedup 15.6× en écriture, 27× en lecture (mais latence absolute augmente)
+
+DÉCOUVERTE CLÉE:
+L'innovation n'est PAS juste le matériel UPMEM, c'est LA PARALLÉLISATION.
+En mode séquentiel, même avec 64 DPU, c'est lent (un DPU à la fois).
+En mode parallèle, tous les DPU transferent ensemble → gain spectaculaire.
+
+RECOMMANDATION PRATIQUE:
+"En pratique, nous recommandons 8-16 DPU pour un bon compromis entre latence
+et efficacité. Au-delà, le gain marginal ne justifie pas les ressources."
+
+NOMBRE DE DPU ET NOMBRE DE PAGES:
+- Pour 10 pages: 1 DPU suffit (31 µs sans parallélisation)
+- Pour 100 pages: 4-8 DPU optimal
+- Pour 1000+ pages: 16-32 DPU exploite bien le parallélisme
+
+UTILISATION DANS L'ARTICLE:
+"La Figure 2 montre que la parallélisation...", 
+"Comme indiqué Figure 2, le mode parallèle apporte un gain de...",
+"Le speedup maximal atteint 27× en lecture (Figure 2)..."
