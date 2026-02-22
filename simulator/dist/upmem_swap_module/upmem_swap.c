@@ -5,10 +5,6 @@
 #include <sys/time.h>
 #include "upmem_swap.h"
 
-/* ===== Bandwidth Parameters (from ETH Zürich) ===== */
-#define UPMEM_HOST_WRITE_BANDWIDTH_GBS 0.33   /* CPU→DPU */
-#define UPMEM_HOST_READ_BANDWIDTH_GBS 0.12    /* DPU→CPU */
-
 /* ===== Implémentation: Gestionnaire UPMEM Swap ===== */
 
 /* 
@@ -101,116 +97,6 @@ static double simulate_upmem_latency_us(uint32_t size_bytes, int is_read)
     double jitter = (total * 0.05) * ((rand() % 101 - 50) / 50.0);
     
     return total + jitter;
-}
-
-/* ===== PARALLEL LATENCY CALCULATION ===== */
-
-/**
- * Calculate transfer time for N bytes at given bandwidth (GB/s)
- */
-static double upmem_calc_transfer_us(uint32_t size_bytes, double bandwidth_gbps)
-{
-    if (bandwidth_gbps <= 0) return 0;
-    return (size_bytes / (bandwidth_gbps * 1e9)) * 1e6;
-}
-
-/**
- * Calculate batch latency WITH PARALLEL transfers
- * Pages are distributed across DPUs and transferred in parallel
- * 
- * Uses REAL contention model from ETH Zürich measurements:
- *   - 1 DPU: 0.33 GB/s (baseline)
- *   - 64 DPUs: 6.68 GB/s (measured, not 64×)
- *   - Max speedup: 6.68 / 0.33 = 20.24× (bus saturation)
- * 
- * Example: 8 pages on 8 DPUs (real)
- *   - Speedup factor: min(8, 20.24) = 8 (linear until saturation)
- *   - Effective bandwidth: 8 × 0.33 GB/s = 2.64 GB/s
- *   - Transfer per DPU: 4 KB / 2.64 GB/s = 1.5 µs
- *   - Total = 12 + 6 + 1.5 = 19.5 µs
- *   - Latency/page = 19.5 / 8 = 2.4 µs (8× from 30 µs baseline)
- */
-static double upmem_swap_out_batch_latency_parallel(upmem_swap_manager_t *mgr,
-                                                     uint32_t count)
-{
-    if (!mgr || count == 0) return 0;
-    
-    uint32_t nr_active = (count < mgr->nr_dpus) ? count : mgr->nr_dpus;
-    
-    /* ETH contention model: max speedup is 20.24× for 64 DPUs */
-    /* speedup(n) = min(n, 20.24) */
-    /* effective_bandwidth(n) = 0.33 * min(n, 20.24) GB/s */
-    double max_speedup = 20.24;  /* From ETH: 6.68 GB/s / 0.33 GB/s */
-    double actual_speedup = (nr_active < max_speedup) ? nr_active : max_speedup;
-    double effective_bandwidth = UPMEM_HOST_WRITE_BANDWIDTH_GBS * actual_speedup;
-    
-    /* Calculate pages per DPU with round-robin distribution */
-    uint32_t pages_per_dpu = count / nr_active;
-    uint32_t remainder = count % nr_active;
-    
-    /* Maximum transfer time among all DPUs */
-    double max_transfer = 0;
-    
-    /* Most DPUs get pages_per_dpu pages */
-    uint32_t normal_size = pages_per_dpu * PAGE_SIZE;
-    if (normal_size > 0) {
-        double normal_xfer = upmem_calc_transfer_us(normal_size, effective_bandwidth);
-        if (normal_xfer > max_transfer) max_transfer = normal_xfer;
-    }
-    
-    /* Some DPUs get one extra page (remainder) */
-    if (remainder > 0) {
-        uint32_t extra_size = (pages_per_dpu + 1) * PAGE_SIZE;
-        double extra_xfer = upmem_calc_transfer_us(extra_size, effective_bandwidth);
-        if (extra_xfer > max_transfer) max_transfer = extra_xfer;
-    }
-    
-    /* Total latency: overhead + mram + max(all DPU transfers) */
-    double kernel_overhead = 12.0;
-    double mram_lat = 6.0;
-    double total_latency = kernel_overhead + mram_lat + max_transfer;
-    
-    return total_latency;
-}
-
-/**
- * Same for swap-in (read operation, lower bandwidth)
- * Uses same contention model: max speedup 20.24× for read bandwidth
- */
-static double upmem_swap_in_batch_latency_parallel(upmem_swap_manager_t *mgr,
-                                                    uint32_t count)
-{
-    if (!mgr || count == 0) return 0;
-    
-    uint32_t nr_active = (count < mgr->nr_dpus) ? count : mgr->nr_dpus;
-    
-    /* Same contention model applies to reads */
-    double max_speedup = 20.24;
-    double actual_speedup = (nr_active < max_speedup) ? nr_active : max_speedup;
-    double effective_bandwidth = UPMEM_HOST_READ_BANDWIDTH_GBS * actual_speedup;
-    
-    uint32_t pages_per_dpu = count / nr_active;
-    uint32_t remainder = count % nr_active;
-    
-    double max_transfer = 0;
-    
-    uint32_t normal_size = pages_per_dpu * PAGE_SIZE;
-    if (normal_size > 0) {
-        double normal_xfer = upmem_calc_transfer_us(normal_size, effective_bandwidth);
-        if (normal_xfer > max_transfer) max_transfer = normal_xfer;
-    }
-    
-    if (remainder > 0) {
-        uint32_t extra_size = (pages_per_dpu + 1) * PAGE_SIZE;
-        double extra_xfer = upmem_calc_transfer_us(extra_size, effective_bandwidth);
-        if (extra_xfer > max_transfer) max_transfer = extra_xfer;
-    }
-    
-    double kernel_overhead = 12.0;
-    double mram_lat = 6.0;
-    double total_latency = kernel_overhead + mram_lat + max_transfer;
-    
-    return total_latency;
 }
 
 /* ===== Helpers: allocation and free-list management per DPU ===== */
@@ -518,17 +404,25 @@ int upmem_swap_out_batch(upmem_swap_manager_t *mgr,
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    /* Calculate batch transfer latency WITH PARALLEL model
-     * ✓ Pages are distributed across multiple DPUs
-     * ✓ Transfers happen in PARALLEL (not sequential)
-     * ✓ Latency = time for slowest DPU, not sum of all
+    /* Calculate batch transfer latency
+     * Batch reduces per-page overhead by amortizing kernel/setup cost
      */
-    double latency_us = upmem_swap_out_batch_latency_parallel(mgr, count);
+    uint32_t total_size = count * PAGE_SIZE;
     
-    /* Add realistic jitter (±5% variation) */
+    /* Latency model for batch:
+     * - Kernel overhead: 12 µs (paid once, not per-page)
+     * - MRAM latency: 6 µs (per first page access)
+     * - Transfer: depends on total size
+     */
+    double overhead = 12.0;  /* Paid once for whole batch */
+    double mram_lat = upmem_mram_latency_us(PAGE_SIZE, 0);  /* First page */
+    double batch_transfer_us = upmem_host_transfer_latency_us(total_size, 0);
+    
+    double latency_us = overhead + mram_lat + batch_transfer_us;
+    
+    /* Add jitter */
     double jitter = (latency_us * 0.05) * ((rand() % 101 - 50) / 50.0);
     double total_us = latency_us + jitter;
-
     
     gettimeofday(&end, NULL);
     
@@ -595,9 +489,14 @@ int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    /* Calculate batch transfer latency WITH PARALLEL model for read */
-    double latency_us = upmem_swap_in_batch_latency_parallel(mgr, count);
-
+    /* Calculate batch transfer latency for read */
+    uint32_t total_size = count * PAGE_SIZE;
+    
+    double overhead = 12.0;  /* Paid once */
+    double mram_lat = upmem_mram_latency_us(PAGE_SIZE, 1);  /* First page read */
+    double batch_transfer_us = upmem_host_transfer_latency_us(total_size, 1);
+    
+    double latency_us = overhead + mram_lat + batch_transfer_us;
     
     /* Add jitter */
     double jitter = (latency_us * 0.05) * ((rand() % 101 - 50) / 50.0);

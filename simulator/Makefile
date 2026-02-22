@@ -26,15 +26,32 @@ OBJECTS = $(SOURCES:.c=.o)
 
 # Targets
 TARGET = swap_sim
+BENCHMARK_BATCH = benchmark_batch
+BENCHMARK_BATCH_IMPROVED = benchmark_batch_improved
+BENCHMARK_BATCH_SOURCES = src/benchmark_batch.c src/memory_sim.c src/page_table.c \
+                          src/upmem_swap.c src/ssd_baseline.c
+BENCHMARK_BATCH_IMPROVED_SOURCES = src/benchmark_batch_improved.c src/memory_sim.c src/page_table.c \
+                          src/upmem_swap.c src/ssd_baseline.c
+BENCHMARK_BATCH_OBJECTS = $(BENCHMARK_BATCH_SOURCES:.c=.o)
 DPU_TARGET = dpu/dpu_program
 
 # Main target
-all: $(TARGET)
+all: $(TARGET) $(BENCHMARK_BATCH) $(BENCHMARK_BATCH_IMPROVED)
 
 # Build simulator
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS) $(LDFLAGS)
 	@echo "Build successful: $(TARGET)"
+
+# Build batch benchmark
+$(BENCHMARK_BATCH): $(BENCHMARK_BATCH_OBJECTS)
+	$(CC) $(CFLAGS) -o $(BENCHMARK_BATCH) $(BENCHMARK_BATCH_OBJECTS) $(LDFLAGS)
+	@echo "Build successful: $(BENCHMARK_BATCH)"
+
+# Build improved batch benchmark
+$(BENCHMARK_BATCH_IMPROVED): $(BENCHMARK_BATCH_IMPROVED_SOURCES:.c=.o)
+	$(CC) $(CFLAGS) -o $(BENCHMARK_BATCH_IMPROVED) $(BENCHMARK_BATCH_IMPROVED_SOURCES:.c=.o) $(LDFLAGS)
+	@echo "Build successful: $(BENCHMARK_BATCH_IMPROVED)"
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -74,12 +91,24 @@ test_patterns: $(TARGET)
 
 # Cleanup
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) $(BENCHMARK_BATCH) $(BENCHMARK_BATCH_IMPROVED)
 	rm -f dpu/dpu_program
 	rm -f results/*.csv
+
+# Run batch benchmark
+bench_batch: $(BENCHMARK_BATCH)
+	@echo "Running batch operations benchmark..."
+	./$(BENCHMARK_BATCH) 8 100
+	@echo "Batch results in: results/benchmark_batch.csv"
+
+# Run improved batch benchmark
+bench_batch_improved: $(BENCHMARK_BATCH_IMPROVED)
+	@echo "Running improved batch operations benchmark..."
+	./$(BENCHMARK_BATCH_IMPROVED) 8 100
+	@echo "Improved batch results in: results/benchmark_batch_improved.csv"
 
 # Debug build
 debug: CFLAGS += -DDEBUG=1
 debug: clean $(TARGET)
 
-.PHONY: all clean test test_scaling test_patterns debug dpu_program
+.PHONY: all clean test test_scaling test_patterns debug dpu_program bench_batch bench_batch_improved

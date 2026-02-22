@@ -37,11 +37,16 @@ workload_simulator_t* workload_init(ram_simulator_t *ram, page_table_t *pt,
     wl->page_faults = 0;
     wl->swapouts = 0;
     wl->swapins = 0;
+    wl->prefetch_hits = 0;
     wl->total_fault_time_us = 0.0;
     wl->sequential_index = 0;
     
-    DEBUG_PRINT("Workload initialisé: type=%d, accesses=%u, ws=%u",
-                type, nr_accesses, working_set_size);
+    /* Prefetch off by default */
+    wl->enable_prefetch = 0;
+    wl->prefetch_distance = 4;
+    
+    DEBUG_PRINT("Workload initialisé: type=%d, accesses=%u, ws=%u, prefetch=%d",
+                type, nr_accesses, working_set_size, wl->enable_prefetch);
     
     return wl;
 }
