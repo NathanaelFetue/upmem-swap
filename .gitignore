@@ -42,6 +42,12 @@ __pycache__/
 *.bak
 *.orig
 *.txt
+*.tex
+*.aux
+*.toc
+*.out
+*.bbl
+*.blg
 *.jpg
 *.png
 *.pdf
