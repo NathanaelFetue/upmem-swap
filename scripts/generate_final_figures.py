@@ -35,6 +35,21 @@ def read_upmem_swapin_values():
     return values
 
 
+def read_backend_swapin_values():
+    path = 'simulator/results/backend_comparison.csv'
+    values = {}
+    if not os.path.exists(path):
+        return values
+
+    with open(path, newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get('backend', '').strip()
+            if name:
+                values[name] = float(row['avg_swapin_us'])
+    return values
+
+
 def transfer_us(size_bytes, bandwidth_gbs):
     if bandwidth_gbs <= 0:
         return 0.0
@@ -207,14 +222,18 @@ plt.close()
 fig, ax = plt.subplots(figsize=(8, 4.2))
 
 upmem = read_upmem_swapin_values()
+backend = read_backend_swapin_values()
 
-solutions = ['zram', 'InfiniSwap', 'NVMe SSD', 'UPMEM\nBaseline', 'UPMEM\nCPU', 'UPMEM\nDPU']
+zram_swapin = backend.get('zram', 35.0)
+zswap_swapin = backend.get('zswap', 53.0)
 
-latencies_mid = [35, 35, 160, upmem['baseline'], upmem['cpu'], upmem['dpu']]
-latencies_err_lower = [15, 5, 0, 0, 0, 0]
-latencies_err_upper = [15, 5, 0, 0, 0, 0]
+solutions = ['zram', 'zswap', 'InfiniSwap', 'NVMe SSD', 'UPMEM\nBaseline', 'UPMEM\nCPU', 'UPMEM\nDPU']
 
-colors = ['#b3b3b3', '#9a9a9a', '#7f7f7f', '#666666', '#4d4d4d', '#333333']
+latencies_mid = [zram_swapin, zswap_swapin, 35, 160, upmem['baseline'], upmem['cpu'], upmem['dpu']]
+latencies_err_lower = [0, 0, 5, 0, 0, 0, 0]
+latencies_err_upper = [0, 0, 5, 0, 0, 0, 0]
+
+colors = ['#c2c2c2', '#adadad', '#969696', '#7f7f7f', '#666666', '#4d4d4d', '#333333']
 
 x_pos = np.arange(len(solutions))
 
