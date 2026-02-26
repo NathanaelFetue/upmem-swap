@@ -19,6 +19,7 @@ typedef struct {
     uint32_t frame_id;          /* Si PAGE_IN_RAM: frame ID */
     uint32_t dpu_id;            /* Si PAGE_IN_SWAP: DPU ID */
     uint64_t dpu_offset;        /* Si PAGE_IN_SWAP: offset dans MRAM */
+    uint32_t swap_size;         /* Taille stockée en swap (compressée ou brute) */
     uint64_t last_access_time;  /* Ts pour LRU (microseconde) */
 } page_entry_t;
 

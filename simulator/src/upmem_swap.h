@@ -23,6 +23,12 @@ typedef struct free_block {
     struct free_block *next;
 } free_block_t;
 
+typedef enum {
+    COMPRESS_NONE = 0,
+    COMPRESS_CPU = 1,
+    COMPRESS_DPU = 2
+} compress_mode_t;
+
 typedef struct {
     /* DPU set (simulé) */
     uint32_t nr_dpus;
@@ -34,6 +40,12 @@ typedef struct {
     uint64_t total_swapins;
     double total_swapout_time_us;
     double total_swapin_time_us;
+
+    compress_mode_t compress_mode;
+    double total_cpu_compress_us;
+    double total_dpu_compress_us;
+    uint64_t total_bytes_raw;
+    uint64_t total_bytes_stored;
     
     /* Batch statistics */
     uint64_t batch_swapouts;
@@ -76,5 +88,11 @@ int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
                        page_entry_t **pages,
                        void **data,
                        uint32_t count);
+
+void upmem_swap_set_compress_mode(upmem_swap_manager_t *mgr, compress_mode_t mode);
+const char* upmem_swap_mode_str(compress_mode_t mode);
+double upmem_swap_get_avg_cpu_overhead_us(upmem_swap_manager_t *mgr);
+double upmem_swap_get_avg_dpu_compress_us(upmem_swap_manager_t *mgr);
+double upmem_swap_get_compression_ratio(upmem_swap_manager_t *mgr);
 
 #endif /* UPMEM_SWAP_H */

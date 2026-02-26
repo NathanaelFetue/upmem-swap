@@ -4,7 +4,7 @@ CC = gcc
 DPU_CC = dpu-upmem-dpurte-clang
 
 CFLAGS = -Wall -Wextra -O2 -g -std=c99
-LDFLAGS = -lm
+LDFLAGS = -lm -llz4
 
 # Try to detect UPMEM SDK
 UPMEM_SDK_AVAILABLE = $(shell which dpu-pkg-config > /dev/null 2>&1 && echo yes || echo no)

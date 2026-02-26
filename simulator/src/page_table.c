@@ -30,6 +30,7 @@ page_table_t* page_table_init(uint32_t nr_pages)
         pt->entries[i].frame_id = 0;
         pt->entries[i].dpu_id = 0;
         pt->entries[i].dpu_offset = 0;
+        pt->entries[i].swap_size = 0;
         pt->entries[i].last_access_time = 0;
     }
     
@@ -100,6 +101,9 @@ void page_table_update_page(page_table_t *pt, uint32_t page_id,
     pt->entries[page_id].frame_id = frame_id;
     pt->entries[page_id].dpu_id = dpu_id;
     pt->entries[page_id].dpu_offset = dpu_offset;
+    if (status != PAGE_IN_SWAP) {
+        pt->entries[page_id].swap_size = 0;
+    }
     pt->entries[page_id].last_access_time = get_current_time_us();
     
     DEBUG_PRINT("Page %u updated: status=%d", page_id, status);

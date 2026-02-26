@@ -1,8 +1,12 @@
+#define _POSIX_C_SOURCE 199309L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <sys/time.h>
+#include <time.h>
+#include <lz4.h>
 #include "upmem_swap.h"
 
 /* ===== Bandwidth Parameters (from ETH Zürich) ===== */
@@ -101,6 +105,18 @@ static double simulate_upmem_latency_us(uint32_t size_bytes, int is_read)
     double jitter = (total * 0.05) * ((rand() % 101 - 50) / 50.0);
     
     return total + jitter;
+}
+
+static double timespec_diff_us(const struct timespec *start, const struct timespec *end)
+{
+    double sec = (double)(end->tv_sec - start->tv_sec);
+    double nsec = (double)(end->tv_nsec - start->tv_nsec);
+    return sec * 1e6 + nsec / 1e3;
+}
+
+static double estimate_dpu_compress_us(void)
+{
+    return 1.5; /* ESTIMATED - hardware validation needed */
 }
 
 /* ===== PARALLEL LATENCY CALCULATION ===== */
@@ -292,6 +308,11 @@ upmem_swap_manager_t* upmem_swap_init(uint32_t nr_dpus)
     mgr->total_swapins = 0;
     mgr->total_swapout_time_us = 0.0;
     mgr->total_swapin_time_us = 0.0;
+    mgr->compress_mode = COMPRESS_NONE;
+    mgr->total_cpu_compress_us = 0.0;
+    mgr->total_dpu_compress_us = 0.0;
+    mgr->total_bytes_raw = 0;
+    mgr->total_bytes_stored = 0;
     
     mgr->dpu_states = (dpu_swap_state_t *)malloc(nr_dpus * sizeof(dpu_swap_state_t));
     if (!mgr->dpu_states) {
@@ -333,11 +354,52 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     }
     dpu_swap_state_t *dpu = &mgr->dpu_states[dpu_id];
     
+    uint32_t transfer_size = PAGE_SIZE;
+    uint32_t stored_size = PAGE_SIZE;
+    double cpu_comp_us = 0.0;
+    double dpu_comp_us = 0.0;
+
+    char *compressed_buf = (char *)malloc(LZ4_COMPRESSBOUND(PAGE_SIZE));
+    if (!compressed_buf) {
+        fprintf(stderr, "Erreur allocation compression buffer\n");
+        return -1;
+    }
+
+    if (mgr->compress_mode == COMPRESS_CPU) {
+        struct timespec cstart, cend;
+        clock_gettime(CLOCK_MONOTONIC, &cstart);
+        int comp_size = LZ4_compress_default((const char *)data,
+                                             compressed_buf,
+                                             PAGE_SIZE,
+                                             LZ4_COMPRESSBOUND(PAGE_SIZE));
+        clock_gettime(CLOCK_MONOTONIC, &cend);
+        if (comp_size > 0) {
+            transfer_size = (uint32_t)comp_size;
+            stored_size = (uint32_t)comp_size;
+        }
+        cpu_comp_us = timespec_diff_us(&cstart, &cend);
+        mgr->total_cpu_compress_us += cpu_comp_us;
+    } else if (mgr->compress_mode == COMPRESS_DPU) {
+        int comp_size = LZ4_compress_default((const char *)data,
+                                             compressed_buf,
+                                             PAGE_SIZE,
+                                             LZ4_COMPRESSBOUND(PAGE_SIZE));
+        if (comp_size > 0) {
+            stored_size = (uint32_t)comp_size;
+        }
+        transfer_size = PAGE_SIZE;
+        dpu_comp_us = estimate_dpu_compress_us();
+        mgr->total_dpu_compress_us += dpu_comp_us;
+    }
+
+    mgr->total_bytes_raw += PAGE_SIZE;
+    mgr->total_bytes_stored += stored_size;
+
     /* Simule transfer + mesure latence */
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    double latency_us = simulate_upmem_latency_us(PAGE_SIZE, 0);  /* write=0 (CPU→MRAM) */
+    double latency_us = simulate_upmem_latency_us(transfer_size, 0) + dpu_comp_us;  /* write=0 (CPU→MRAM) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Pas de memcpy réel ici */
@@ -351,8 +413,9 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     
     /* Allocate space (from free-list or free_offset) */
     uint64_t alloc_offset = 0;
-    if (allocate_block_from_dpu(dpu, PAGE_SIZE, &alloc_offset) != 0) {
+    if (allocate_block_from_dpu(dpu, stored_size, &alloc_offset) != 0) {
         fprintf(stderr, "Erreur: impossible d'allouer espace sur DPU %u\n", dpu_id);
+        free(compressed_buf);
         return -1;
     }
 
@@ -360,6 +423,7 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
     page->status = PAGE_IN_SWAP;
     page->dpu_id = dpu_id;
     page->dpu_offset = alloc_offset;
+    page->swap_size = stored_size;
 
     /* Increment stats */
     mgr->total_swapouts++;
@@ -367,6 +431,7 @@ int upmem_swap_out(upmem_swap_manager_t *mgr, page_entry_t *page,
 
     /* Advance next_dpu to continue round-robin from next slot */
     mgr->next_dpu = (dpu_id + 1) % mgr->nr_dpus;
+    free(compressed_buf);
     
     DEBUG_PRINT("Swap out: page %u → DPU %u offset %lu (latency %.2f µs)",
                 page->page_id, dpu_id, dpu->free_offset - PAGE_SIZE, total_us);
@@ -397,11 +462,13 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
         return -1;
     }
     
+    uint32_t transfer_size = (page->swap_size > 0) ? page->swap_size : PAGE_SIZE;
+
     /* Simule transfer + mesure latence */
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    double latency_us = simulate_upmem_latency_us(PAGE_SIZE, 1);  /* read=1 (MRAM→CPU) */
+    double latency_us = simulate_upmem_latency_us(transfer_size, 1);  /* read=1 (MRAM→CPU) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Transfer simulé */
@@ -416,7 +483,8 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
     /* Update page entry */
     page->status = PAGE_IN_RAM;
     /* Free MRAM space previously used by this page */
-    mark_space_free(mgr, dpu_id, page->dpu_offset, PAGE_SIZE);
+    mark_space_free(mgr, dpu_id, page->dpu_offset, transfer_size);
+    page->swap_size = 0;
     
     /* Increment stats */
     mgr->total_swapins++;
@@ -449,6 +517,10 @@ void upmem_swap_stats_print(upmem_swap_manager_t *mgr)
     printf("Avg swap in latency: %.2f µs\n", avg_in);
     printf("Total swap out time: %.2f ms\n", mgr->total_swapout_time_us / 1000.0);
     printf("Total swap in time: %.2f ms\n", mgr->total_swapin_time_us / 1000.0);
+    printf("Compression mode: %s\n", upmem_swap_mode_str(mgr->compress_mode));
+    printf("Avg CPU compression overhead: %.2f µs\n", upmem_swap_get_avg_cpu_overhead_us(mgr));
+    printf("Avg DPU compression overhead (estimated): %.2f µs\n", upmem_swap_get_avg_dpu_compress_us(mgr));
+    printf("Compression ratio (raw/stored): %.2f\n", upmem_swap_get_compression_ratio(mgr));
 }
 
 void upmem_swap_destroy(upmem_swap_manager_t *mgr)
@@ -621,4 +693,37 @@ int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
     DEBUG_PRINT("Batch swap in: %u pages in %.2f µs", count, total_us);
     
     return 0;
+}
+
+void upmem_swap_set_compress_mode(upmem_swap_manager_t *mgr, compress_mode_t mode)
+{
+    if (!mgr) return;
+    mgr->compress_mode = mode;
+}
+
+const char* upmem_swap_mode_str(compress_mode_t mode)
+{
+    switch (mode) {
+        case COMPRESS_CPU: return "cpu";
+        case COMPRESS_DPU: return "dpu";
+        default: return "none";
+    }
+}
+
+double upmem_swap_get_avg_cpu_overhead_us(upmem_swap_manager_t *mgr)
+{
+    if (!mgr || mgr->total_swapouts == 0) return 0.0;
+    return mgr->total_cpu_compress_us / mgr->total_swapouts;
+}
+
+double upmem_swap_get_avg_dpu_compress_us(upmem_swap_manager_t *mgr)
+{
+    if (!mgr || mgr->total_swapouts == 0) return 0.0;
+    return mgr->total_dpu_compress_us / mgr->total_swapouts;
+}
+
+double upmem_swap_get_compression_ratio(upmem_swap_manager_t *mgr)
+{
+    if (!mgr || mgr->total_bytes_stored == 0) return 1.0;
+    return (double)mgr->total_bytes_raw / (double)mgr->total_bytes_stored;
 }
