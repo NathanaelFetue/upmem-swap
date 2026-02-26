@@ -14,6 +14,8 @@ typedef struct {
     uint64_t swapins;
     double avg_swapout_us;
     double avg_swapin_us;
+    double avg_cpu_compress_us;
+    double avg_cpu_decompress_us;
     double avg_cpu_overhead_us;
     double avg_dpu_compress_us;
     double compression_ratio;

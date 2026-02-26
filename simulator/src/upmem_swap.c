@@ -6,12 +6,15 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <time.h>
+#include <math.h>
 #include <lz4.h>
 #include "upmem_swap.h"
 
 /* ===== Bandwidth Parameters (from ETH Zürich) ===== */
 #define UPMEM_HOST_WRITE_BANDWIDTH_GBS 0.33   /* CPU→DPU */
 #define UPMEM_HOST_READ_BANDWIDTH_GBS 0.12    /* DPU→CPU */
+#define UPMEM_ALPHA_WRITE 0.722
+#define UPMEM_ALPHA_READ 0.875
 
 /* ===== Implémentation: Gestionnaire UPMEM Swap ===== */
 
@@ -119,6 +122,38 @@ static double estimate_dpu_compress_us(void)
     return 1.5; /* ESTIMATED - hardware validation needed */
 }
 
+static double measure_lz4_decompress_us(void)
+{
+    static int initialized = 0;
+    static char compressed_ref[LZ4_COMPRESSBOUND(PAGE_SIZE)];
+    static int compressed_ref_size = 0;
+    static char raw_ref[PAGE_SIZE];
+
+    if (!initialized) {
+        for (uint32_t i = 0; i < PAGE_SIZE; i++) {
+            raw_ref[i] = (char)(i & 0xFF);
+        }
+        compressed_ref_size = LZ4_compress_default(raw_ref,
+                                                   compressed_ref,
+                                                   PAGE_SIZE,
+                                                   LZ4_COMPRESSBOUND(PAGE_SIZE));
+        if (compressed_ref_size <= 0) {
+            return 0.0;
+        }
+        initialized = 1;
+    }
+
+    char out_ref[PAGE_SIZE];
+    struct timespec dstart, dend;
+    clock_gettime(CLOCK_MONOTONIC, &dstart);
+    (void)LZ4_decompress_safe(compressed_ref,
+                              out_ref,
+                              compressed_ref_size,
+                              PAGE_SIZE);
+    clock_gettime(CLOCK_MONOTONIC, &dend);
+    return timespec_diff_us(&dstart, &dend);
+}
+
 /* ===== PARALLEL LATENCY CALCULATION ===== */
 
 /**
@@ -134,15 +169,13 @@ static double upmem_calc_transfer_us(uint32_t size_bytes, double bandwidth_gbps)
  * Calculate batch latency WITH PARALLEL transfers
  * Pages are distributed across DPUs and transferred in parallel
  * 
- * Uses REAL contention model from ETH Zürich measurements:
- *   - 1 DPU: 0.33 GB/s (baseline)
- *   - 64 DPUs: 6.68 GB/s (measured, not 64×)
- *   - Max speedup: 6.68 / 0.33 = 20.24× (bus saturation)
+ * Uses empirical contention model from ETH Zürich measurements:
+ *   speedup_write(n) = n^0.722
  * 
  * Example: 8 pages on 8 DPUs (real)
- *   - Speedup factor: min(8, 20.24) = 8 (linear until saturation)
- *   - Effective bandwidth: 8 × 0.33 GB/s = 2.64 GB/s
- *   - Transfer per DPU: 4 KB / 2.64 GB/s = 1.5 µs
+ *   - Speedup factor (write): 8^0.722
+ *   - Effective bandwidth: 0.33 × 8^0.722 GB/s
+ *   - Transfer per DPU computed with this effective bandwidth
  *   - Total = 12 + 6 + 1.5 = 19.5 µs
  *   - Latency/page = 19.5 / 8 = 2.4 µs (8× from 30 µs baseline)
  */
@@ -153,11 +186,8 @@ static double upmem_swap_out_batch_latency_parallel(upmem_swap_manager_t *mgr,
     
     uint32_t nr_active = (count < mgr->nr_dpus) ? count : mgr->nr_dpus;
     
-    /* ETH contention model: max speedup is 20.24× for 64 DPUs */
-    /* speedup(n) = min(n, 20.24) */
-    /* effective_bandwidth(n) = 0.33 * min(n, 20.24) GB/s */
-    double max_speedup = 20.24;  /* From ETH: 6.68 GB/s / 0.33 GB/s */
-    double actual_speedup = (nr_active < max_speedup) ? nr_active : max_speedup;
+    /* Empirical contention model: speedup_write(n) = n^0.722 */
+    double actual_speedup = pow((double)nr_active, UPMEM_ALPHA_WRITE);
     double effective_bandwidth = UPMEM_HOST_WRITE_BANDWIDTH_GBS * actual_speedup;
     
     /* Calculate pages per DPU with round-robin distribution */
@@ -191,7 +221,7 @@ static double upmem_swap_out_batch_latency_parallel(upmem_swap_manager_t *mgr,
 
 /**
  * Same for swap-in (read operation, lower bandwidth)
- * Uses same contention model: max speedup 20.24× for read bandwidth
+ * Empirical contention model: speedup_read(n) = n^0.875
  */
 static double upmem_swap_in_batch_latency_parallel(upmem_swap_manager_t *mgr,
                                                     uint32_t count)
@@ -200,9 +230,7 @@ static double upmem_swap_in_batch_latency_parallel(upmem_swap_manager_t *mgr,
     
     uint32_t nr_active = (count < mgr->nr_dpus) ? count : mgr->nr_dpus;
     
-    /* Same contention model applies to reads */
-    double max_speedup = 20.24;
-    double actual_speedup = (nr_active < max_speedup) ? nr_active : max_speedup;
+    double actual_speedup = pow((double)nr_active, UPMEM_ALPHA_READ);
     double effective_bandwidth = UPMEM_HOST_READ_BANDWIDTH_GBS * actual_speedup;
     
     uint32_t pages_per_dpu = count / nr_active;
@@ -310,6 +338,7 @@ upmem_swap_manager_t* upmem_swap_init(uint32_t nr_dpus)
     mgr->total_swapin_time_us = 0.0;
     mgr->compress_mode = COMPRESS_NONE;
     mgr->total_cpu_compress_us = 0.0;
+    mgr->total_cpu_decompress_us = 0.0;
     mgr->total_dpu_compress_us = 0.0;
     mgr->total_bytes_raw = 0;
     mgr->total_bytes_stored = 0;
@@ -468,7 +497,13 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
-    double latency_us = simulate_upmem_latency_us(transfer_size, 1);  /* read=1 (MRAM→CPU) */
+    double cpu_decomp_us = 0.0;
+    if (mgr->compress_mode != COMPRESS_NONE && transfer_size < PAGE_SIZE) {
+        cpu_decomp_us = measure_lz4_decompress_us();
+        mgr->total_cpu_decompress_us += cpu_decomp_us;
+    }
+
+    double latency_us = simulate_upmem_latency_us(transfer_size, 1) + cpu_decomp_us;  /* read=1 (MRAM→CPU) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Transfer simulé */
@@ -518,7 +553,9 @@ void upmem_swap_stats_print(upmem_swap_manager_t *mgr)
     printf("Total swap out time: %.2f ms\n", mgr->total_swapout_time_us / 1000.0);
     printf("Total swap in time: %.2f ms\n", mgr->total_swapin_time_us / 1000.0);
     printf("Compression mode: %s\n", upmem_swap_mode_str(mgr->compress_mode));
-    printf("Avg CPU compression overhead: %.2f µs\n", upmem_swap_get_avg_cpu_overhead_us(mgr));
+    printf("Avg CPU compress overhead: %.2f µs\n", upmem_swap_get_avg_cpu_compress_us(mgr));
+    printf("Avg CPU decompress overhead: %.2f µs\n", upmem_swap_get_avg_cpu_decompress_us(mgr));
+    printf("Avg CPU total codec overhead: %.2f µs\n", upmem_swap_get_avg_cpu_overhead_us(mgr));
     printf("Avg DPU compression overhead (estimated): %.2f µs\n", upmem_swap_get_avg_dpu_compress_us(mgr));
     printf("Compression ratio (raw/stored): %.2f\n", upmem_swap_get_compression_ratio(mgr));
 }
@@ -710,10 +747,24 @@ const char* upmem_swap_mode_str(compress_mode_t mode)
     }
 }
 
-double upmem_swap_get_avg_cpu_overhead_us(upmem_swap_manager_t *mgr)
+double upmem_swap_get_avg_cpu_compress_us(upmem_swap_manager_t *mgr)
 {
     if (!mgr || mgr->total_swapouts == 0) return 0.0;
     return mgr->total_cpu_compress_us / mgr->total_swapouts;
+}
+
+double upmem_swap_get_avg_cpu_decompress_us(upmem_swap_manager_t *mgr)
+{
+    if (!mgr || mgr->total_swapins == 0) return 0.0;
+    return mgr->total_cpu_decompress_us / mgr->total_swapins;
+}
+
+double upmem_swap_get_avg_cpu_overhead_us(upmem_swap_manager_t *mgr)
+{
+    if (!mgr) return 0.0;
+    double avg_comp = upmem_swap_get_avg_cpu_compress_us(mgr);
+    double avg_decomp = upmem_swap_get_avg_cpu_decompress_us(mgr);
+    return avg_comp + avg_decomp;
 }
 
 double upmem_swap_get_avg_dpu_compress_us(upmem_swap_manager_t *mgr)

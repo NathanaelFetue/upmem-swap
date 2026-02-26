@@ -18,10 +18,10 @@ void stats_export_csv(swap_stats_t *stats, const char *filename)
     
     /* Header */
     fprintf(f, "mode,nr_dpus,ram_mb,working_set,pattern,total_accesses,page_faults,");
-    fprintf(f, "swapouts,swapins,avg_swapout_us,avg_swapin_us,avg_cpu_overhead_us,avg_dpu_compress_us,compression_ratio,hit_rate\n");
+    fprintf(f, "swapouts,swapins,avg_swapout_us,avg_swapin_us,avg_cpu_compress_us,avg_cpu_decompress_us,avg_cpu_overhead_us,avg_dpu_compress_us,compression_ratio,hit_rate\n");
     
     /* Data */
-        fprintf(f, "%s,%u,%u,%u,%s,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+        fprintf(f, "%s,%u,%u,%u,%s,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
             stats->mode ? stats->mode : "none",
             stats->nr_dpus,
             stats->ram_mb,
@@ -33,6 +33,8 @@ void stats_export_csv(swap_stats_t *stats, const char *filename)
             stats->swapins,
             stats->avg_swapout_us,
             stats->avg_swapin_us,
+            stats->avg_cpu_compress_us,
+            stats->avg_cpu_decompress_us,
             stats->avg_cpu_overhead_us,
             stats->avg_dpu_compress_us,
             stats->compression_ratio,
@@ -71,7 +73,9 @@ void stats_print(swap_stats_t *stats)
     printf("  Swap ins: %lu\n", stats->swapins);
     printf("  Avg swap out latency: %.2f µs\n", stats->avg_swapout_us);
     printf("  Avg swap in latency: %.2f µs\n", stats->avg_swapin_us);
-    printf("  Avg CPU compression overhead: %.2f µs\n", stats->avg_cpu_overhead_us);
+    printf("  Avg CPU compress overhead: %.2f µs\n", stats->avg_cpu_compress_us);
+    printf("  Avg CPU decompress overhead: %.2f µs\n", stats->avg_cpu_decompress_us);
+    printf("  Avg CPU total codec overhead: %.2f µs\n", stats->avg_cpu_overhead_us);
     printf("  Avg DPU compression overhead (estimated): %.2f µs\n", stats->avg_dpu_compress_us);
     printf("  Compression ratio (raw/stored): %.2f\n", stats->compression_ratio);
     printf("\n");

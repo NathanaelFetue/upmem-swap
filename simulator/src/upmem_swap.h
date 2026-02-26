@@ -43,6 +43,7 @@ typedef struct {
 
     compress_mode_t compress_mode;
     double total_cpu_compress_us;
+    double total_cpu_decompress_us;
     double total_dpu_compress_us;
     uint64_t total_bytes_raw;
     uint64_t total_bytes_stored;
@@ -91,6 +92,8 @@ int upmem_swap_in_batch(upmem_swap_manager_t *mgr,
 
 void upmem_swap_set_compress_mode(upmem_swap_manager_t *mgr, compress_mode_t mode);
 const char* upmem_swap_mode_str(compress_mode_t mode);
+double upmem_swap_get_avg_cpu_compress_us(upmem_swap_manager_t *mgr);
+double upmem_swap_get_avg_cpu_decompress_us(upmem_swap_manager_t *mgr);
 double upmem_swap_get_avg_cpu_overhead_us(upmem_swap_manager_t *mgr);
 double upmem_swap_get_avg_dpu_compress_us(upmem_swap_manager_t *mgr);
 double upmem_swap_get_compression_ratio(upmem_swap_manager_t *mgr);
