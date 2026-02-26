@@ -43,8 +43,8 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), dpi=100)
 x = np.arange(len(labels))
 w = 0.35
 
-ax1.bar(x - w / 2, swapout, w, label="Swap-out latency (µs)", color="#444444")
-ax1.bar(x + w / 2, cpu_compress, w, label="CPU compress (µs)", color="#aaaaaa")
+ax1.bar(x - w / 2, swapout, w, color="#444444", label="Swap-out latency (µs)")
+ax1.bar(x + w / 2, cpu_compress, w, color="#aaaaaa", label="CPU compression (µs)")
 ax1.set_xticks(x)
 ax1.set_xticklabels(labels, fontsize=9)
 ax1.set_ylabel("Microseconds", fontsize=9)
@@ -52,8 +52,8 @@ ax1.set_title("Swap-out", fontsize=9)
 ax1.legend(fontsize=7, loc="upper right", frameon=True)
 ax1.grid(axis="y", alpha=0.3)
 
-ax2.bar(x - w / 2, swapin, w, label="Swap-in latency (µs)", color="#666666")
-ax2.bar(x + w / 2, cpu_decompress, w, label="CPU decompress (µs)", color="#c0c0c0")
+ax2.bar(x - w / 2, swapin, w, color="#666666", label="Swap-in latency (µs)")
+ax2.bar(x + w / 2, cpu_decompress, w, color="#c0c0c0", label="CPU decompression (µs)")
 ax2.set_xticks(x)
 ax2.set_xticklabels(labels, fontsize=9)
 ax2.set_ylabel("Microseconds", fontsize=9)
@@ -66,26 +66,26 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(OUT, dpi=100)
 print(f"Figure saved: {OUT} (600x300px)")
 
-# Second compact figure: measured CPU decompression overhead vs swap-in latency (from CSV)
+# Second compact figure: measured total CPU codec overhead vs swap-in latency
 fig2, ax = plt.subplots(figsize=(6, 3), dpi=100)
 labels_scatter = ["Option A (CPU)", "Option B (DPU)", "Baseline"]
 csv_keys = ["A\nCPU", "B\nDPU", "Base"]
-cpu_decomp_measured = [float(rows[k].get("avg_cpu_decompress_us", 0.0)) for k in csv_keys]
+cpu_total_measured = [float(rows[k].get("avg_cpu_overhead_us", 0.0)) for k in csv_keys]
 swapin_measured = [float(rows[k]["avg_swapin_us"]) for k in csv_keys]
 point_colors = ["#333333", "#777777", "#b0b0b0"]
 
 for i, label in enumerate(labels_scatter):
-    ax.scatter(cpu_decomp_measured[i], swapin_measured[i], s=72,
+    ax.scatter(cpu_total_measured[i], swapin_measured[i], s=72,
                c=point_colors[i], edgecolors="black")
     ax.annotate(label,
-                (cpu_decomp_measured[i], swapin_measured[i]),
+                (cpu_total_measured[i], swapin_measured[i]),
                 xytext=(4, 4),
                 textcoords="offset points",
                 fontsize=7)
 
-ax.set_xlabel("CPU decompression overhead (µs)", fontsize=9)
+ax.set_xlabel("CPU total codec overhead (µs)", fontsize=9)
 ax.set_ylabel("Swap-in latency (µs)", fontsize=9)
-ax.set_title("Swap-in latency vs CPU decompression", fontsize=9)
+ax.set_title("Swap-in latency vs CPU overhead", fontsize=9)
 ax.grid(alpha=0.3)
 ax.set_xlim(left=0.0)
 ax.set_ylim(14, 53)
