@@ -64,12 +64,14 @@ ssd_baseline_t ssd_get_baseline(ssd_type_t type)
 double ssd_page_fault_latency_us(ssd_type_t type, uint32_t page_size)
 {
     ssd_baseline_t baseline = ssd_get_baseline(type);
+    double size_scale = (page_size > 0) ? ((double)page_size / 4096.0) : 1.0;
+    double transfer_latency = baseline.transfer_latency_us * size_scale;
     
     /* Total = kernel + seek + rotation + transfer */
     double total = baseline.kernel_overhead_us + 
                    baseline.seek_time_us +
                    baseline.rotation_overhead_us +
-                   baseline.transfer_latency_us;
+                   transfer_latency;
     
     return total;
 }
