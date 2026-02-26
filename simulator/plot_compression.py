@@ -26,36 +26,39 @@ for label, path in INPUTS.items():
         rows[label] = row
 
 labels = list(rows.keys())
+swapout = []
 swapin = []
 cpu_compress = []
 cpu_decompress = []
-ratio = []
 for label in labels:
     r = rows[label]
+    swapout.append(float(r["avg_swapout_us"]))
     swapin.append(float(r["avg_swapin_us"]))
     cpu_compress.append(float(r.get("avg_cpu_compress_us", 0.0)))
     cpu_decompress.append(float(r.get("avg_cpu_decompress_us", 0.0)))
-    ratio.append(float(r.get("compression_ratio", 1.0)))
 
 plt.rcParams.update({"font.size": 10})
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), dpi=100)
 
 x = np.arange(len(labels))
-w = 0.24
+w = 0.35
 
-ax1.bar(x - w, swapin, w, label="Swap-in latency (µs)", color="#444444")
-ax1.bar(x, cpu_compress, w, label="CPU compress (µs)", color="#8f8f8f")
-ax1.bar(x + w, cpu_decompress, w, label="CPU decompress (µs)", color="#c0c0c0")
+ax1.bar(x - w / 2, swapout, w, label="Swap-out latency (µs)", color="#444444")
+ax1.bar(x + w / 2, cpu_compress, w, label="CPU compress (µs)", color="#aaaaaa")
 ax1.set_xticks(x)
 ax1.set_xticklabels(labels, fontsize=9)
 ax1.set_ylabel("Microseconds", fontsize=9)
-ax1.set_title("Swap-in path vs codec cost", fontsize=9)
+ax1.set_title("Swap-out path", fontsize=9)
 ax1.legend(fontsize=7, loc="upper right", frameon=True)
 ax1.grid(axis="y", alpha=0.3)
 
-ax2.bar(labels, ratio, color="#777777")
-ax2.set_ylabel("Compression ratio", fontsize=9)
-ax2.set_ylim(0, max(8, max(ratio) * 1.1))
+ax2.bar(x - w / 2, swapin, w, label="Swap-in latency (µs)", color="#666666")
+ax2.bar(x + w / 2, cpu_decompress, w, label="CPU decompress (µs)", color="#c0c0c0")
+ax2.set_xticks(x)
+ax2.set_xticklabels(labels, fontsize=9)
+ax2.set_ylabel("Microseconds", fontsize=9)
+ax2.set_title("Swap-in path (critical)", fontsize=9)
+ax2.legend(fontsize=7, loc="upper right", frameon=True)
 ax2.grid(axis="y", alpha=0.3)
 
 fig.tight_layout(pad=0.8)
