@@ -20,6 +20,7 @@ static void print_usage(const char *prog)
     printf("  --accesses <N>         Total memory accesses (default: %u)\n", DEFAULT_NR_ACCESSES);
     printf("  --working-set <N>      Working set pages (default: %u)\n", DEFAULT_WORKING_SET);
     printf("  --workload <type>      Workload type: random|sequential|mixed (default: random)\n");
+    printf("  --compress-mode <M>    Compression mode: none|cpu|dpu (default: none)\n");
     printf("  --output <file>        Output CSV (default: results/swap_sim.csv)\n");
     printf("  --help                 Show this help\n");
 }
@@ -32,6 +33,7 @@ int main(int argc, char *argv[])
     uint32_t nr_accesses = DEFAULT_NR_ACCESSES;
     uint32_t working_set = DEFAULT_WORKING_SET;
     workload_type_t workload_type = WORKLOAD_RANDOM;
+    compress_mode_t compress_mode = COMPRESS_NONE;
     const char *output_file = "results/swap_sim.csv";
     const char *pattern_str = "random";
     
@@ -42,13 +44,14 @@ int main(int argc, char *argv[])
         {"accesses", required_argument, NULL, 'a'},
         {"working-set", required_argument, NULL, 'w'},
         {"workload", required_argument, NULL, 'l'},
+        {"compress-mode", required_argument, NULL, 'm'},
         {"output", required_argument, NULL, 'o'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
     
     int opt;
-    while ((opt = getopt_long(argc, argv, "r:d:a:w:l:o:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "r:d:a:w:l:m:o:h", long_options, NULL)) != -1) {
         switch (opt) {
             case 'r':
                 ram_size_mb = atoi(optarg);
@@ -74,6 +77,18 @@ int main(int argc, char *argv[])
                     pattern_str = "mixed";
                 } else {
                     fprintf(stderr, "Unknown workload: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'm':
+                if (strcmp(optarg, "none") == 0) {
+                    compress_mode = COMPRESS_NONE;
+                } else if (strcmp(optarg, "cpu") == 0) {
+                    compress_mode = COMPRESS_CPU;
+                } else if (strcmp(optarg, "dpu") == 0) {
+                    compress_mode = COMPRESS_DPU;
+                } else {
+                    fprintf(stderr, "Unknown compress mode: %s\n", optarg);
                     return 1;
                 }
                 break;
@@ -106,6 +121,7 @@ int main(int argc, char *argv[])
     printf("  Working set: %u pages\n", working_set);
     printf("  Total accesses: %u\n", nr_accesses);
     printf("  Workload pattern: %s\n", pattern_str);
+    printf("  Compression mode: %s\n", upmem_swap_mode_str(compress_mode));
     printf("  Output file: %s\n", output_file);
     printf("\n");
     
@@ -134,6 +150,7 @@ int main(int argc, char *argv[])
         ram_destroy(ram);
         return 1;
     }
+    upmem_swap_set_compress_mode(swap, compress_mode);
     printf("  [OK] UPMEM swap manager initialized\n");
     
     workload_simulator_t *wl = workload_init(ram, pt, swap, workload_type,
@@ -169,6 +186,7 @@ int main(int argc, char *argv[])
     
     /* Prepare stats for export */
     swap_stats_t stats;
+    stats.mode = upmem_swap_mode_str(compress_mode);
     stats.total_accesses = wl->page_hits + wl->page_faults;
     stats.page_faults = wl->page_faults;
     stats.page_hits = wl->page_hits;
@@ -176,6 +194,9 @@ int main(int argc, char *argv[])
     stats.swapins = wl->swapins;
     stats.avg_swapout_us = upmem_swap_get_avg_swapout_us(swap);
     stats.avg_swapin_us = upmem_swap_get_avg_swapin_us(swap);
+    stats.avg_cpu_overhead_us = upmem_swap_get_avg_cpu_overhead_us(swap);
+    stats.avg_dpu_compress_us = upmem_swap_get_avg_dpu_compress_us(swap);
+    stats.compression_ratio = upmem_swap_get_compression_ratio(swap);
     stats.hit_rate = workload_get_hitrate(wl);
     stats.ram_mb = ram_size_mb;
     stats.nr_dpus = nr_dpus;

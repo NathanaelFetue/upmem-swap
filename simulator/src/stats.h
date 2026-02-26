@@ -6,6 +6,7 @@
 /* ===== Collecteur Statistiques ===== */
 
 typedef struct {
+    const char *mode;
     uint64_t total_accesses;
     uint64_t page_hits;
     uint64_t page_faults;
@@ -13,6 +14,9 @@ typedef struct {
     uint64_t swapins;
     double avg_swapout_us;
     double avg_swapin_us;
+    double avg_cpu_overhead_us;
+    double avg_dpu_compress_us;
+    double compression_ratio;
     double hit_rate;
     uint32_t ram_mb;
     uint32_t nr_dpus;

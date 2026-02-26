@@ -57,6 +57,41 @@ static double measure_time_us(struct timeval start, struct timeval end)
     return (end.tv_sec - start.tv_sec) * 1000000.0 + (end.tv_usec - start.tv_usec);
 }
 
+/*
+ * Simulate realistic application writes on the page currently in RAM.
+ * This prevents all-zero pages and gives more representative compression ratios.
+ */
+static void workload_mutate_page_data(workload_simulator_t *wl, page_entry_t *page)
+{
+    if (!wl || !page || page->status != PAGE_IN_RAM) return;
+
+    void *frame_data = ram_get_frame_data(wl->ram, page->frame_id);
+    if (!frame_data) return;
+
+    uint8_t *bytes = (uint8_t *)frame_data;
+    uint32_t seed = (uint32_t)(page->page_id * 2654435761u) ^ (uint32_t)wl->page_faults ^ (uint32_t)wl->page_hits;
+
+    /*
+     * Touch 6 pseudo-random 64-byte regions per access:
+     * - 4 regions with non-linear bytes (high entropy)
+     * - 2 regions with repeated values (structured data)
+     */
+    for (int region = 0; region < 6; region++) {
+        seed = seed * 1664525u + 1013904223u;
+        uint32_t offset = (seed % (PAGE_SIZE - 64));
+
+        if (region < 4) {
+            for (uint32_t j = 0; j < 64; j++) {
+                seed = seed * 1103515245u + 12345u;
+                bytes[offset + j] = (uint8_t)(seed >> 24);
+            }
+        } else {
+            uint8_t value = (uint8_t)(seed & 0xFF);
+            memset(&bytes[offset], value, 64);
+        }
+    }
+}
+
 int workload_access_page(workload_simulator_t *wl, uint32_t page_id)
 {
     if (!wl || !wl->ram || !wl->pt || !wl->swap) {
@@ -76,6 +111,7 @@ int workload_access_page(workload_simulator_t *wl, uint32_t page_id)
         /* Page hit */
         wl->page_hits++;
         page_table_update_access(wl->pt, page_id);
+        workload_mutate_page_data(wl, page);
         return 0;
     }
     
@@ -125,6 +161,7 @@ int workload_access_page(workload_simulator_t *wl, uint32_t page_id)
     
     /* Update page table */
     page_table_update_page(wl->pt, page_id, PAGE_IN_RAM, frame_id, 0, 0);
+    workload_mutate_page_data(wl, page);
     
     gettimeofday(&end, NULL);
     double fault_time_us = measure_time_us(start, end);
