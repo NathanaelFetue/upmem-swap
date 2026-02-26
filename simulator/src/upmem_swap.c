@@ -491,19 +491,26 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
         return -1;
     }
     
-    uint32_t transfer_size = (page->swap_size > 0) ? page->swap_size : PAGE_SIZE;
+    uint32_t stored_size = (page->swap_size > 0) ? page->swap_size : PAGE_SIZE;
+    uint32_t transfer_size = stored_size;
 
     /* Simule transfer + mesure latence */
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
     double cpu_decomp_us = 0.0;
-    if (mgr->compress_mode != COMPRESS_NONE && transfer_size < PAGE_SIZE) {
+    double dpu_decomp_us = 0.0;
+    if (mgr->compress_mode == COMPRESS_CPU && stored_size < PAGE_SIZE) {
         cpu_decomp_us = measure_lz4_decompress_us();
         mgr->total_cpu_decompress_us += cpu_decomp_us;
+    } else if (mgr->compress_mode == COMPRESS_DPU && stored_size < PAGE_SIZE) {
+        /* DPU-side decompression model: decompress before sending to host */
+        dpu_decomp_us = estimate_dpu_compress_us();
+        mgr->total_dpu_compress_us += dpu_decomp_us;
+        transfer_size = PAGE_SIZE;
     }
 
-    double latency_us = simulate_upmem_latency_us(transfer_size, 1) + cpu_decomp_us;  /* read=1 (MRAM→CPU) */
+    double latency_us = simulate_upmem_latency_us(transfer_size, 1) + cpu_decomp_us + dpu_decomp_us;  /* read=1 (MRAM→CPU) */
     
     /* Simule le transfer (en réalité: dpu_prepare_xfer + dpu_push_xfer) */
     /* Transfer simulé */
@@ -518,7 +525,7 @@ int upmem_swap_in(upmem_swap_manager_t *mgr, page_entry_t *page,
     /* Update page entry */
     page->status = PAGE_IN_RAM;
     /* Free MRAM space previously used by this page */
-    mark_space_free(mgr, dpu_id, page->dpu_offset, transfer_size);
+    mark_space_free(mgr, dpu_id, page->dpu_offset, stored_size);
     page->swap_size = 0;
     
     /* Increment stats */
