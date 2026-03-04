@@ -194,6 +194,8 @@ int main(int argc, char *argv[])
     stats.swapins = wl->swapins;
     stats.avg_swapout_us = upmem_swap_get_avg_swapout_us(swap);
     stats.avg_swapin_us = upmem_swap_get_avg_swapin_us(swap);
+    stats.avg_cpu_compress_us = upmem_swap_get_avg_cpu_compress_us(swap);
+    stats.avg_cpu_decompress_us = upmem_swap_get_avg_cpu_decompress_us(swap);
     stats.avg_cpu_overhead_us = upmem_swap_get_avg_cpu_overhead_us(swap);
     stats.avg_dpu_compress_us = upmem_swap_get_avg_dpu_compress_us(swap);
     stats.compression_ratio = upmem_swap_get_compression_ratio(swap);

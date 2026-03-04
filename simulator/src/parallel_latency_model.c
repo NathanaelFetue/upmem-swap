@@ -7,10 +7,10 @@
  * 3. Latency = kernel + mram + MAX(transfer_times) [not SUM]
  * 4. Add contention model for high DPU counts
  * 
- * EXPECTED GAINS:
- *   1 DPU:   ~30 µs/page (baseline)
- *   8 DPUs:  ~3.8 µs/page (7.9× speedup)
- *   64 DPUs: ~0.6 µs/page (50× speedup, with contention penalty)
+ * EXPECTED GAINS (model-dependent):
+ *   1 DPU: baseline
+ *   8 DPUs: multi-x speedup
+ *   64 DPUs: strong speedup with diminishing returns
  */
 
 #include <stdint.h>
@@ -24,6 +24,8 @@
 #define MRAM_LATENCY_US 6.0
 #define HOST_WRITE_BANDWIDTH_GBS 0.33  /* CPU→DPU */
 #define HOST_READ_BANDWIDTH_GBS 0.12   /* DPU→CPU */
+#define ALPHA_WRITE 0.722
+#define ALPHA_READ 0.875
 
 typedef struct {
     uint32_t pages_on_dpu;
@@ -66,9 +68,9 @@ double simulate_parallel_batch_swapout(uint32_t num_dpus, uint32_t batch_size,
     /* Count actually active DPUs (that will have pages) */
     uint32_t nr_active = (batch_size < num_dpus) ? batch_size : num_dpus;
     
-    /* ETH contention model: real max speedup is 20.24× for 64 DPUs */
-    double max_speedup = 20.24;  /* From ETH: 6.68 GB/s / 0.33 GB/s */
-    double actual_speedup = (nr_active < max_speedup) ? nr_active : max_speedup;
+    /* Empirical contention model */
+    double alpha = (operation == 0) ? ALPHA_WRITE : ALPHA_READ;
+    double actual_speedup = pow((double)nr_active, alpha);
     double effective_bandwidth = bandwidth_gbps * actual_speedup;
     
     /* Calculate transfer time for each DPU independently with effective bandwidth */

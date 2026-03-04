@@ -11,6 +11,32 @@ import os
 
 os.makedirs('simulator/results', exist_ok=True)
 
+PAGE_SIZE = 4096
+KERNEL_OVERHEAD_US = 12.0
+MRAM_LATENCY_US = 6.0
+HOST_WRITE_BW_GBS = 0.33
+HOST_READ_BW_GBS = 0.12
+ALPHA_WRITE = 0.722
+ALPHA_READ = 0.875
+
+
+def transfer_us(size_bytes, bandwidth_gbs):
+    return (size_bytes / (bandwidth_gbs * 1e9)) * 1e6 if bandwidth_gbs > 0 else 0.0
+
+
+def modeled_speedup_values(dpus, batch_pages=50):
+    total_bytes = batch_pages * PAGE_SIZE
+    base_w = KERNEL_OVERHEAD_US + MRAM_LATENCY_US + transfer_us(total_bytes, HOST_WRITE_BW_GBS)
+    base_r = KERNEL_OVERHEAD_US + MRAM_LATENCY_US + transfer_us(total_bytes, HOST_READ_BW_GBS)
+    w = []
+    r = []
+    for d in dpus:
+        w_lat = KERNEL_OVERHEAD_US + MRAM_LATENCY_US + transfer_us(total_bytes, HOST_WRITE_BW_GBS * (float(d) ** ALPHA_WRITE))
+        r_lat = KERNEL_OVERHEAD_US + MRAM_LATENCY_US + transfer_us(total_bytes, HOST_READ_BW_GBS * (float(d) ** ALPHA_READ))
+        w.append(base_w / w_lat)
+        r.append(base_r / r_lat)
+    return np.array(w), np.array(r)
+
 # ============= FIGURE 1: ARCHITECTURE RÉELLE =============
 fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111)
@@ -97,8 +123,7 @@ fig, ax = plt.subplots(figsize=(10, 6))
 
 # Vraies données de benchmark_complete.c
 dpus = np.array([1, 8, 16, 32, 64])
-write_speedup = np.array([0.97, 6.04, 10.44, 14.87, 15.62])
-read_speedup = np.array([0.80, 6.05, 14.30, 14.67, 27.10])
+write_speedup, read_speedup = modeled_speedup_values(dpus)
 
 # Plot
 x_pos = np.arange(len(dpus))
