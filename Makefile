@@ -10,8 +10,8 @@
 
 # Directories
 BUILD_DIR := build
-SRC_HOST_DIR := src/host
-SRC_DPU_DIR := src/dpu
+SRC_HOST_DIR := prototype/host
+SRC_DPU_DIR := prototype/dpu
 DOCS_DIR := docs
 
 # Output files
@@ -88,15 +88,15 @@ help:
 
 
 # Test 4KB pages
-test_4kb: src/host/test_4kb_pages.c $(BUILD_DIR)/dpu
-@echo "Building 4KB page test..."
-gcc -I$(UPMEM_HOME)/include -I$(UPMEM_HOME)/include/dpu \
-    -o $(BUILD_DIR)/test_4kb \
-    src/host/test_4kb_pages.c \
-    -L$(UPMEM_HOME)/lib -ldpu -lm \
-    -Wl,-rpath,$(UPMEM_HOME)/lib
-@echo "✓ test_4kb built successfully"
+test_4kb: prototype/host/test_4kb_pages.c $(BUILD_DIR)/dpu
+	@echo "Building 4KB page test..."
+	gcc -I$(UPMEM_HOME)/include -I$(UPMEM_HOME)/include/dpu \
+	    -o $(BUILD_DIR)/test_4kb \
+	    prototype/host/test_4kb_pages.c \
+	    -L$(UPMEM_HOME)/lib -ldpu -lm \
+	    -Wl,-rpath,$(UPMEM_HOME)/lib
+	@echo "✓ test_4kb built successfully"
 
 run_4kb: test_4kb
-@echo "=== Running 4KB Page Test ==="
-$(BUILD_DIR)/test_4kb
+	@echo "=== Running 4KB Page Test ==="
+	$(BUILD_DIR)/test_4kb

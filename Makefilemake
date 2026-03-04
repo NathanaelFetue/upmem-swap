@@ -1,1 +1,1 @@
-$(CC) $(CFLAGS) -o build/test_4kb src/host/test_4kb_pages.c $(LDFLAGS) -lm test_4kb
+$(CC) $(CFLAGS) -o build/test_4kb prototype/host/test_4kb_pages.c $(LDFLAGS) -lm test_4kb
