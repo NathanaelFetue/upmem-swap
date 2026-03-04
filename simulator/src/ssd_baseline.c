@@ -4,11 +4,11 @@
 /* 
  * SSD Latency Models based on published data:
  * 
- * SATA SSD (2020+):
+ * SATA SSD (page-fault baseline used in this project):
  *   - Seek: 0 (no moving parts)
  *   - Kernel overhead: ~10 µs (context switch + I/O scheduler)
- *   - Queue depth 1 latency: ~50-150 µs measured
- *   - Source: Product specs (Samsung 870 EVO, Crucial MX500)
+ *   - Effective transfer/service: ~150 µs
+ *   - Total target baseline: ~160 µs (aligned with InfiniSwap page-fault path references)
  * 
  * NVMe (PCIe gen3):
  *   - Seek: 0
@@ -34,7 +34,7 @@ ssd_baseline_t ssd_get_baseline(ssd_type_t type)
             baseline.type = SSD_TYPE_SATA;
             baseline.seek_time_us = 0.0;          /* No seek */
             baseline.rotation_overhead_us = 0.0;  /* No rotation */
-            baseline.transfer_latency_us = 75.0;  /* Average of range 50-150 */
+            baseline.transfer_latency_us = 150.0; /* 10 + 150 = 160 µs total baseline */
             break;
             
         case SSD_TYPE_NVME:
@@ -55,7 +55,7 @@ ssd_baseline_t ssd_get_baseline(ssd_type_t type)
             baseline.type = SSD_TYPE_SATA;
             baseline.seek_time_us = 0.0;
             baseline.rotation_overhead_us = 0.0;
-            baseline.transfer_latency_us = 75.0;
+            baseline.transfer_latency_us = 150.0;
     }
     
     return baseline;

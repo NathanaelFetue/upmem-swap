@@ -43,8 +43,8 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), dpi=100)
 x = np.arange(len(labels))
 w = 0.35
 
-ax1.bar(x - w / 2, swapout, w, color="#444444", label="Swap-out latency (µs)")
-ax1.bar(x + w / 2, cpu_compress, w, color="#aaaaaa", label="CPU compression (µs)")
+ax1.bar(x - w / 2, swapout, w, color="#444444", label="Swap-out latency")
+ax1.bar(x + w / 2, cpu_compress, w, color="#aaaaaa", label="CPU compression")
 ax1.set_xticks(x)
 ax1.set_xticklabels(labels, fontsize=9)
 ax1.set_ylabel("Microseconds", fontsize=9)
@@ -52,8 +52,8 @@ ax1.set_title("Swap-out", fontsize=9)
 ax1.legend(fontsize=7, loc="upper left", frameon=True)
 ax1.grid(axis="y", alpha=0.3)
 
-ax2.bar(x - w / 2, swapin, w, color="#666666", label="Swap-in latency (µs)")
-ax2.bar(x + w / 2, cpu_decompress, w, color="#c0c0c0", label="CPU decompression (µs)")
+ax2.bar(x - w / 2, swapin, w, color="#666666", label="Swap-in latency")
+ax2.bar(x + w / 2, cpu_decompress, w, color="#c0c0c0", label="CPU decompression")
 ax2.set_xticks(x)
 ax2.set_xticklabels(labels, fontsize=9)
 ax2.set_ylabel("Microseconds", fontsize=9)
@@ -76,16 +76,12 @@ point_colors = ["#333333", "#777777", "#b0b0b0"]
 
 for i, label in enumerate(labels_scatter):
     ax.scatter(cpu_total_measured[i], swapin_measured[i], s=72,
-               c=point_colors[i], edgecolors="black")
-    ax.annotate(label,
-                (cpu_total_measured[i], swapin_measured[i]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=7)
+               c=point_colors[i], edgecolors="black", label=label)
 
 ax.set_xlabel("CPU total codec overhead (µs)", fontsize=9)
 ax.set_ylabel("Swap-in latency (µs)", fontsize=9)
 ax.set_title("Swap-in latency vs CPU overhead", fontsize=9)
+ax.legend(fontsize=8, loc="upper right", frameon=True)
 ax.grid(alpha=0.3)
 x_max = max(cpu_total_measured) if cpu_total_measured else 1.0
 ax.set_xlim(-0.12, x_max + 0.35)

@@ -8,14 +8,14 @@
 #include <string.h>
 #include <sys/time.h>
 #include "config.h"
+#include "ssd_baseline.h"
 
 /* zswap latency model (component-based, 4KB page) */
-#define ZSWAP_KERNEL_US 10.0
-#define ZSWAP_COMPRESS_US 5.0
-#define ZSWAP_DECOMPRESS_US 6.0
-#define ZSWAP_MEMCPY_US 4.0
-#define ZSWAP_SSD_FALLBACK_US 85.0
-#define ZSWAP_HIT_RATE 0.70
+#define ZSWAP_KERNEL_US 13.0
+#define ZSWAP_COMPRESS_US 2.0
+#define ZSWAP_DECOMPRESS_US 2.0
+#define ZSWAP_MEMCPY_US 5.0
+#define ZSWAP_HIT_RATE 0.75
 
 /* zswap simulation state */
 typedef struct {
@@ -63,10 +63,10 @@ double zswap_swap_in_latency_us(void)
         g_zswap_state.cache_hits++;
         g_zswap_state.total_cpu_overhead_us += ZSWAP_DECOMPRESS_US;
     } else {
-        /* Cache miss - read from SSD */
-        latency = ZSWAP_KERNEL_US + ZSWAP_SSD_FALLBACK_US;
+        /* Cache miss - read from SSD (full page-fault path baseline) */
+        latency = ssd_page_fault_latency_us(SSD_TYPE_SATA, PAGE_SIZE);
         g_zswap_state.cache_misses++;
-        g_zswap_state.total_cpu_overhead_us += 1.0;
+        g_zswap_state.total_cpu_overhead_us += 0.5;
     }
     
     /* Add realistic jitter (±5%) */

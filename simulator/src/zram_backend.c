@@ -10,10 +10,10 @@
 #include "config.h"
 
 /* zram latency model (component-based, 4KB page) */
-#define ZRAM_KERNEL_US 10.0
-#define ZRAM_COMPRESS_US 7.0
-#define ZRAM_DECOMPRESS_US 5.0
-#define ZRAM_MEMCPY_US 4.0
+#define ZRAM_KERNEL_US 13.0
+#define ZRAM_COMPRESS_US 3.0
+#define ZRAM_DECOMPRESS_US 3.0
+#define ZRAM_MEMCPY_US 5.0
 
 /* zram simulation state */
 typedef struct {
